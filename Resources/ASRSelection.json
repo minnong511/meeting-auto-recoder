@@ -1,0 +1,18 @@
+{
+  "engine": "qwen17",
+  "model": "Qwen3-ASR-1.7B-4bit",
+  "repository": "mlx-community/Qwen3-ASR-1.7B-4bit",
+  "revision": "78a389c776a5483b2d0d4ea5494e11012e0d6159",
+  "runtime": "mlx-audio",
+  "runtimeVersion": "0.6.2",
+  "language": "Korean",
+  "evaluation": {
+    "dataset": "google/fleurs",
+    "config": "ko_kr",
+    "split": "test",
+    "samples": 169,
+    "cer": 0.04484573068643865,
+    "wer": 0.1055350553505535,
+    "scope": "Fixed read-speech subset; Korean meeting accuracy and superiority over Whisper are not established"
+  }
+}

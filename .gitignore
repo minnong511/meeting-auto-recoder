@@ -1,0 +1,8 @@
+.build/
+dist/
+Recordings/
+.DS_Store
+.swiftpm/
+.runtime/
+*.xcuserstate
+__pycache__/
