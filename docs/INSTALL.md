@@ -11,7 +11,43 @@
 
 이 배포본에는 앱과 MCP 서버가 들어 있습니다. Xcode, Python, Qwen 또는 Cohere 모델 설치는 필요하지 않습니다. Intel Mac용 실행 파일은 포함하지 않습니다.
 
-## 1. 앱 설치
+## 터미널 명령으로 설치
+
+다음 한 줄로 앱과 MCP 서버를 설치하고 Whisper 음성인식 모델까지 준비할 수 있습니다.
+
+```sh
+curl -fsSL --proto '=https' --proto-redir '=https' https://raw.githubusercontent.com/minnong511/meeting-auto-recoder-/main/scripts/install.sh | /bin/bash
+```
+
+1. 고정된 배포 커밋의 0.8.0 ZIP을 내려받고 설치 스크립트에 기록된 SHA-256과 비교합니다.
+2. 앱과 MCP 서버의 서명을 검사한 뒤 설치합니다. 기존 `/Applications` 또는 `~/Applications`의 앱을 먼저 찾습니다. 두 위치에 모두 있으면 설치 폴더를 직접 선택해야 합니다. 새 설치는 쓰기 가능한 `/Applications`를 우선 사용하고, 권한이 없으면 `~/Applications`를 사용합니다.
+3. Whisper 모델 약 627MB와 토크나이저를 내려받고 실행 준비를 마칩니다. 기존 모델 캐시가 있으면 재사용합니다. 첫 준비에는 수 분이 걸릴 수 있습니다.
+4. 앱을 엽니다. 저장 폴더 선택과 macOS의 실행 승인·시스템 오디오·마이크 권한 허용은 직접 진행합니다. LLM 앱의 MCP 연결은 아래 4번 절차를 따릅니다.
+
+`sudo` 없이 실행하세요. 관리자 암호, Xcode, Python 설치는 필요하지 않습니다. 모델 준비 실패 시 앱은 설치된 상태로 남고 명령은 종료 코드 2를 반환합니다. 인터넷 연결과 실행 승인을 확인한 뒤 다시 실행하거나 첫 녹음 때 모델 준비를 재시도하세요.
+
+앱만 설치하고 모델은 첫 녹음 때 준비하려면:
+
+```sh
+curl -fsSL --proto '=https' --proto-redir '=https' https://raw.githubusercontent.com/minnong511/meeting-auto-recoder-/main/scripts/install.sh | /bin/bash -s -- --skip-model
+```
+
+설치 위치를 직접 지정하려면:
+
+```sh
+curl -fsSL --proto '=https' --proto-redir '=https' https://raw.githubusercontent.com/minnong511/meeting-auto-recoder-/main/scripts/install.sh | /bin/bash -s -- --install-dir "$HOME/Applications"
+```
+
+설치 후 앱 실행을 생략하려면 `--no-open`을 추가합니다. 스크립트를 먼저 확인한 뒤 실행하거나 로컬 ZIP을 사용하려면 저장소에서 다음과 같이 실행할 수도 있습니다.
+
+```sh
+bash scripts/install.sh --help
+bash scripts/install.sh --archive releases/Meeting-Recorder-0.8.0-macOS-arm64.zip
+```
+
+이 명령은 현재 사용자 계정에 설치합니다. 녹음 파일과 기존 설정은 유지하며, 실행 중인 앱의 교체와 다른 서명의 앱으로 업데이트하는 작업은 거부합니다. 이전 앱은 설치 폴더 안의 숨김 폴더 `.meeting-recorder-backups/`에 보관해 실행 중인 MCP 연결의 파일을 유지합니다. 이전 버전에 연결된 LLM 앱을 모두 종료한 뒤 더 이상 필요 없는 백업을 지울 수 있습니다. 개발용 체크아웃의 앱 업데이트는 [개발자 가이드](BUILDING.md)의 `scripts/build-app.sh`를 사용하세요.
+
+## 1. ZIP으로 직접 설치
 
 1. ZIP을 압축 해제합니다.
 2. `Meeting Recorder.app`을 Finder의 **응용 프로그램** 폴더로 옮깁니다.
@@ -36,7 +72,7 @@
 1. 파일을 보관할 폴더를 선택합니다. 앱 내부가 아닌 문서 폴더 등 별도 위치를 권장합니다.
 2. `새 회의`를 누르고 Zoom, Teams 등의 녹음 대상을 선택합니다.
 3. `내 마이크`를 켜면 내 목소리도 포함합니다. 꺼두면 선택 앱의 소리만 기록합니다.
-4. `녹음 시작`을 누릅니다. 처음 한 번 Whisper 모델을 다운로드하고 준비합니다.
+4. `녹음 시작`을 누릅니다. 설치 명령으로 모델을 준비하지 않았다면 처음 한 번 Whisper 모델을 다운로드하고 준비합니다.
 5. macOS가 요청하는 시스템 오디오 권한을 허용합니다. 마이크를 켠 경우에는 마이크 권한도 필요합니다.
 6. 권한을 바꾼 뒤 필요하면 앱을 종료하고 다시 엽니다.
 
@@ -66,6 +102,8 @@ LLM 연결은 앱별로 한 줄로 표시합니다. 여러 세션이 연결되�
 ## 5. 업데이트와 삭제
 
 업데이트 전 녹음을 마치고 앱을 종료한 뒤 새 앱으로 교체하세요. 같은 배포자의 동일한 서명과 설치 경로를 유지하는 것이 좋습니다. 서명 주체나 경로가 바뀌면 macOS가 녹음 권한을 다시 요청할 수 있습니다.
+
+명령으로 설치했다면 같은 설치 명령을 다시 실행할 수 있습니다. 현재 설치 스크립트는 0.8.0을 설치하며, 새 버전을 배포할 때 스크립트도 갱신합니다. 강제 종료 뒤 `.meeting-recorder-install.lock` 오류가 남으면 실행 중인 설치가 없는지 확인한 다음 오류에 표시된 빈 잠금 폴더만 삭제하고 재시도하세요.
 
 앱을 삭제해도 별도로 선택한 녹음 저장 폴더는 남습니다. 앱 안에서 회의를 삭제하면 관련 파일은 Finder 휴지통으로 이동하므로 복구할 수 있습니다.
 

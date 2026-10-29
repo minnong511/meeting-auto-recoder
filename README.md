@@ -6,6 +6,18 @@
 
 **현재 버전: 0.8.0 · Apple Silicon · macOS 26 이상**
 
+터미널에 다음 한 줄을 붙여 넣으면 **배포본 다운로드 → SHA-256·서명 검사 → 앱과 MCP 서버 설치 → 음성인식 모델 준비 → 앱 실행**까지 진행합니다. 관리자 암호나 Xcode, Python은 필요하지 않습니다.
+
+```sh
+curl -fsSL --proto '=https' --proto-redir '=https' https://raw.githubusercontent.com/minnong511/meeting-auto-recoder-/main/scripts/install.sh | /bin/bash
+```
+
+기존 `/Applications` 또는 `~/Applications`의 앱 위치를 유지합니다. 새 설치는 쓰기 가능한 `/Applications`를 우선 사용하고, 권한이 없으면 `~/Applications`를 사용합니다. 업데이트 전 녹음을 마치고 앱을 종료하세요. 첫 모델 준비에는 인터넷 연결과 약 627MB 및 추가 캐시 공간이 필요합니다.
+
+**macOS의 앱 실행 승인, 저장 폴더 선택, 시스템 오디오·마이크 권한 허용은 직접 해야 합니다.** LLM 요약을 사용하려면 앱에서 MCP 연결 설정을 복사해 사용하는 LLM 앱에 붙여 넣으세요. 설치 위치 선택과 모델 준비 생략 옵션은 [설치 README](docs/INSTALL.md#터미널-명령으로-설치)에 있습니다.
+
+직접 설치하려면:
+
 1. [ZIP 배포본](releases/Meeting-Recorder-0.8.0-macOS-arm64.zip)을 내려받아 압축을 풉니다.
 2. 안의 `Meeting Recorder.app`을 **응용 프로그램** 폴더로 옮깁니다.
 3. 앱을 실행하고 녹음 파일을 보관할 폴더를 선택합니다.
@@ -42,7 +54,7 @@ STT에 극단적인 반복 오류가 생기면 현재 미확정 구간만 한 �
 ```text
 Sources/       앱, 오디오 처리, 데이터 모델, MCP 서버, 회귀 검사
 Resources/     앱 설정, 권한 설명, 배포용 라이선스 고지
-scripts/       빌드, 고정 서명, 배포 ZIP 생성·검증, MCP 검사
+scripts/       명령어 설치, 빌드, 고정 서명, 배포 ZIP 생성·검증, MCP 검사
 docs/          설치 안내와 개발자 가이드
 releases/      커밋에 포함한 배포 ZIP, 설치 안내, SHA-256
 experiments/   앱 실행과 분리한 과거 ASR 비교 실험
