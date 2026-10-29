@@ -16,7 +16,7 @@
 다음 한 줄로 앱과 MCP 서버를 설치하고 Whisper 음성인식 모델까지 준비할 수 있습니다.
 
 ```sh
-curl -fsSL --proto '=https' --proto-redir '=https' https://raw.githubusercontent.com/minnong511/meeting-auto-recoder-/main/scripts/install.sh | /bin/bash
+curl -fsSL --proto '=https' --proto-redir '=https' https://raw.githubusercontent.com/minnong511/meeting-auto-recoder/main/scripts/install.sh | /bin/bash
 ```
 
 1. 고정된 배포 커밋의 0.8.0 ZIP을 내려받고 설치 스크립트에 기록된 SHA-256과 비교합니다.
@@ -29,13 +29,13 @@ curl -fsSL --proto '=https' --proto-redir '=https' https://raw.githubusercontent
 앱만 설치하고 모델은 첫 녹음 때 준비하려면:
 
 ```sh
-curl -fsSL --proto '=https' --proto-redir '=https' https://raw.githubusercontent.com/minnong511/meeting-auto-recoder-/main/scripts/install.sh | /bin/bash -s -- --skip-model
+curl -fsSL --proto '=https' --proto-redir '=https' https://raw.githubusercontent.com/minnong511/meeting-auto-recoder/main/scripts/install.sh | /bin/bash -s -- --skip-model
 ```
 
 설치 위치를 직접 지정하려면:
 
 ```sh
-curl -fsSL --proto '=https' --proto-redir '=https' https://raw.githubusercontent.com/minnong511/meeting-auto-recoder-/main/scripts/install.sh | /bin/bash -s -- --install-dir "$HOME/Applications"
+curl -fsSL --proto '=https' --proto-redir '=https' https://raw.githubusercontent.com/minnong511/meeting-auto-recoder/main/scripts/install.sh | /bin/bash -s -- --install-dir "$HOME/Applications"
 ```
 
 설치 후 앱 실행을 생략하려면 `--no-open`을 추가합니다. 스크립트를 먼저 확인한 뒤 실행하거나 로컬 ZIP을 사용하려면 저장소에서 다음과 같이 실행할 수도 있습니다.

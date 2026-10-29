@@ -9,7 +9,7 @@
 터미널에 다음 한 줄을 붙여 넣으면 **배포본 다운로드 → SHA-256·서명 검사 → 앱과 MCP 서버 설치 → 음성인식 모델 준비 → 앱 실행**까지 진행합니다. 관리자 암호나 Xcode, Python은 필요하지 않습니다.
 
 ```sh
-curl -fsSL --proto '=https' --proto-redir '=https' https://raw.githubusercontent.com/minnong511/meeting-auto-recoder-/main/scripts/install.sh | /bin/bash
+curl -fsSL --proto '=https' --proto-redir '=https' https://raw.githubusercontent.com/minnong511/meeting-auto-recoder/main/scripts/install.sh | /bin/bash
 ```
 
 기존 `/Applications` 또는 `~/Applications`의 앱 위치를 유지합니다. 새 설치는 쓰기 가능한 `/Applications`를 우선 사용하고, 권한이 없으면 `~/Applications`를 사용합니다. 업데이트 전 녹음을 마치고 앱을 종료하세요. 첫 모델 준비에는 인터넷 연결과 약 627MB 및 추가 캐시 공간이 필요합니다.

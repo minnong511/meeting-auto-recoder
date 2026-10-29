@@ -71,7 +71,7 @@ main() {
     local expected_sha=058a832ba9e7f8d30bb5163dd108fc1a2c75411f36de6511369c077256b3cac1
     local install_dir='' archive='' skip_model=0 no_open=0 major downloaded_sha
     local archive_name="Meeting-Recorder-${version}-macOS-arm64.zip"
-    local base_url="https://raw.githubusercontent.com/minnong511/meeting-auto-recoder-/${release_commit}/releases"
+    local base_url="https://raw.githubusercontent.com/minnong511/meeting-auto-recoder/${release_commit}/releases"
     work_dir='' backup_app='' target_app='' lock_dir='' lock_owned=0
     trap cleanup EXIT
     trap 'exit 130' INT

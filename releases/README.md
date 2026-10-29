@@ -11,7 +11,7 @@ ZIP 안에는 `Meeting Recorder.app`, 설치용 `README.md`, `LICENSE`, `CHANGEL
 ## 명령어로 설치
 
 ```sh
-curl -fsSL --proto '=https' --proto-redir '=https' https://raw.githubusercontent.com/minnong511/meeting-auto-recoder-/main/scripts/install.sh | /bin/bash
+curl -fsSL --proto '=https' --proto-redir '=https' https://raw.githubusercontent.com/minnong511/meeting-auto-recoder/main/scripts/install.sh | /bin/bash
 ```
 
 앱·MCP 서버 설치와 Whisper 모델 준비를 수행합니다. macOS 실행 승인과 녹음 권한 허용은 직접 해야 합니다. 옵션과 업데이트 안내는 [설치 README](../docs/INSTALL.md#터미널-명령으로-설치)에 있습니다. 기존 0.8.0 ZIP과 SHA-256은 그대로 유지하며, ZIP 안의 README는 수동 설치를 안내합니다. 최신 명령어 설치 안내는 저장소 문서를 확인하세요.
