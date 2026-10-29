@@ -1,0 +1,15 @@
+Historical experimental ASR components; not bundled with the app.
+
+Final speech recognition can run a separate local MLX worker.
+Qwen runtime: MLX Audio 0.6.2 (MIT): https://github.com/Blaizzy/mlx-audio
+Cohere runtime: MLX Speech 0.5.4 (MIT): https://github.com/AppAutomaton/mlx-speech
+MLX 0.32.4: https://github.com/ml-explore/mlx (MIT).
+The selected model and exact revision are recorded in ASRSelection.json.
+Qwen3-ASR: https://github.com/QwenLM/Qwen3-ASR (Apache License 2.0).
+Cohere Transcribe: https://huggingface.co/CohereLabs/cohere-transcribe-03-2026
+(license metadata: Apache License 2.0).
+Cohere MLX conversion: https://huggingface.co/appautomaton/cohere-asr-mlx
+(license metadata: Apache License 2.0).
+Worker dependencies and model weights are installed separately by the local setup
+script. Installed Python packages retain their own license metadata. The worker
+sets offline mode; it does not upload recordings to a transcription API.

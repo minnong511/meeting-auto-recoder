@@ -16,7 +16,7 @@ let package = Package(
         .executableTarget(name: "MeetingRecorder", dependencies: ["RecorderCore", "RecorderAudio"]),
         .executableTarget(name: "MeetingRecorderMCP", dependencies: ["RecorderCore"]),
         .executableTarget(name: "RecorderChecks", dependencies: ["RecorderCore", "RecorderAudio", .product(name: "WhisperKit", package: "argmax-oss-swift")]),
-        .executableTarget(name: "ASRBenchmark", dependencies: [.product(name: "FluidAudio", package: "FluidAudio"), .product(name: "WhisperKit", package: "argmax-oss-swift")])
+        .executableTarget(name: "ASRBenchmark", dependencies: [.product(name: "FluidAudio", package: "FluidAudio"), .product(name: "WhisperKit", package: "argmax-oss-swift")], path: "experiments/asr/ASRBenchmark")
     ],
     swiftLanguageModes: [.v5]
 )

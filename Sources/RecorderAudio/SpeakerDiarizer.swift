@@ -10,11 +10,6 @@ public enum SpeakerDiarizer {
     }
 
     public static func canAnalyze(_ stored: StoredMeeting) -> Bool {
-        if FinalASR.enabled, !stored.meeting.audioChunks.isEmpty,
-           stored.meeting.audioChunks.allSatisfy({ chunk in
-               guard let url = try? MeetingStore.chunkURL(chunk.fileName, in: stored.directory) else { return false }
-               return FileManager.default.fileExists(atPath: url.path)
-           }) { return true }
         guard stored.meeting.segments.contains(where: { $0.source == .system }) else { return false }
         let system = stored.meeting.audioChunks.filter { $0.source == .system }
         if !system.isEmpty && system.allSatisfy({ chunk in
@@ -30,18 +25,15 @@ public enum SpeakerDiarizer {
     public static func analyze(_ stored: StoredMeeting, modelsDirectory: URL? = nil,
                                progress: @escaping @Sendable (String) -> Void = { _ in }) async throws -> Meeting {
         try Task.checkCancellation()
-        guard FinalASR.enabled || stored.meeting.segments.contains(where: { $0.source == .system }) else {
+        guard stored.meeting.segments.contains(where: { $0.source == .system }) else {
             return SpeakerAttribution.apply([], to: stored.meeting)
         }
         let chunks = stored.meeting.audioChunks.filter { $0.source == .system }
         let temporary = stored.directory.appendingPathComponent(".speaker-input.m4a")
-        let microphoneTemporary = stored.directory.appendingPathComponent(".microphone-input.m4a")
         defer {
             try? FileManager.default.removeItem(at: temporary)
-            try? FileManager.default.removeItem(at: microphoneTemporary)
         }
         let audio: URL
-        var shouldDiarize = true
         if !chunks.isEmpty && chunks.allSatisfy({
             guard let url = try? MeetingStore.chunkURL($0.fileName, in: stored.directory) else { return false }
             return FileManager.default.fileExists(atPath: url.path)
@@ -50,26 +42,16 @@ public enum SpeakerDiarizer {
             let warnings = try await AudioExporter.export(chunks: chunks, directory: stored.directory, fileName: ".speaker-input.m4a")
             guard warnings.isEmpty else { throw RecorderError.message("상대방 오디오 일부를 읽지 못해 화자 분리를 보류했습니다.") }
             audio = temporary
-        } else if chunks.isEmpty && !stored.meeting.segments.contains(where: { $0.source == .system }) {
-            audio = stored.directory.appendingPathComponent("audio.m4a")
-            shouldDiarize = false
         } else {
             guard canAnalyze(stored) else {
                 throw RecorderError.message("이 기록에는 분리된 상대방 오디오가 없습니다. 새 녹음부터 참석자별 구분을 사용할 수 있습니다.")
             }
             audio = stored.directory.appendingPathComponent("audio.m4a")
         }
-        let turns = shouldDiarize ? try await turns(in: audio, modelsDirectory: modelsDirectory, progress: progress) : []
+        let turns = try await turns(in: audio, modelsDirectory: modelsDirectory, progress: progress)
         try Task.checkCancellation()
-        var microphone: URL?
-        let micChunks = stored.meeting.audioChunks.filter { $0.source == .microphone }
-        if FinalASR.enabled && !micChunks.isEmpty {
-            let warnings = try await AudioExporter.export(chunks: micChunks, directory: stored.directory, fileName: ".microphone-input.m4a")
-            guard warnings.isEmpty else { throw RecorderError.message("마이크 오디오 일부를 읽지 못해 최종 전사를 보류했습니다.") }
-            microphone = microphoneTemporary
-        }
-        return try await FinalASR.refine(systemAudio: audio, microphoneAudio: microphone, turns: turns,
-                                          meeting: stored.meeting, progress: progress)
+        // Optional speaker labeling reuses the live words; it never runs ASR.
+        return SpeakerAttribution.apply(turns, to: stored.meeting)
     }
 
     public static func turns(in audio: URL, modelsDirectory: URL? = nil,

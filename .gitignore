@@ -6,3 +6,9 @@ Recordings/
 .runtime/
 *.xcuserstate
 __pycache__/
+.release-staging/
+*.p12
+*.pfx
+*.key
+*.pem
+signing.json

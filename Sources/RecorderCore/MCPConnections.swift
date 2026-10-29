@@ -7,6 +7,31 @@ public struct MCPClientConnection: Codable, Equatable, Sendable {
     public let id: String
     public let name: String
     public let version: String?
+
+    public init(id: String, name: String, version: String? = nil) {
+        self.id = id; self.name = name; self.version = version
+    }
+}
+
+public struct MCPClientGroup: Identifiable, Sendable {
+    public let id: String
+    public let name: String
+    public let sessions: [MCPClientConnection]
+    public var versions: [String] { Array(Set(sessions.compactMap(\.version))).sorted() }
+}
+
+public enum MCPClientPresentation {
+    public static func groups(_ clients: [MCPClientConnection]) -> [MCPClientGroup] {
+        func key(_ client: MCPClientConnection) -> String {
+            let value = client.name.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+            return ["codex-mcp-client", "codex"].contains(value) ? "codex" : value
+        }
+        return Dictionary(grouping: clients, by: key).map { id, sessions in
+            let sorted = sessions.sorted { $0.id < $1.id }
+            let name = id == "codex" ? "Codex" : sorted[0].name.trimmingCharacters(in: .whitespacesAndNewlines)
+            return MCPClientGroup(id: id, name: name.isEmpty ? "이름 없는 앱" : name, sessions: sorted)
+        }.sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
+    }
 }
 
 public final class MCPConnectionLease {

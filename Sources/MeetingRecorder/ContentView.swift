@@ -38,8 +38,8 @@ struct ContentView: View {
     @State private var tab = "transcript"
     @State private var search = ""
     @State private var showsSettings = false
-    @State private var player: AVPlayer?
-    @State private var isPlaying = false
+    @StateObject private var playback = RecordingPlayer()
+    @State private var expandsRecordingControls = false
     @State private var followLive = true
     @State private var pendingDeletion: StoredMeeting?
 
@@ -50,13 +50,21 @@ struct ContentView: View {
         }
     }
 
+    private var showsRecordingControls: Bool {
+        model.isBusy || model.selected == nil || expandsRecordingControls
+    }
+
     var body: some View {
         NavigationSplitView {
-            sidebar.navigationSplitViewColumnWidth(min: 230, ideal: 260, max: 320)
+            GeometryReader { geometry in
+                sidebar.frame(width: geometry.size.width, height: geometry.size.height, alignment: .top)
+            }.navigationSplitViewColumnWidth(min: 230, ideal: 260, max: 320)
         } detail: {
+            GeometryReader { geometry in
             VStack(spacing: 16) {
-                if let suggestion = model.meetingSuggestion { meetingAppBanner(suggestion) }
-                recordingControls
+                if showsRecordingControls, let suggestion = model.meetingSuggestion { meetingAppBanner(suggestion) }
+                if showsRecordingControls { recordingControls }
+                else { collapsedRecordingControls }
                 if let stored = model.selected { meetingDetail(stored) }
                 else { emptyLibrary }
                 workspaceFooter
@@ -64,6 +72,8 @@ struct ContentView: View {
             .padding(.horizontal, 22).padding(.top, 20).padding(.bottom, 12)
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .background(RecorderTheme.canvas)
+            .frame(width: geometry.size.width, height: geometry.size.height, alignment: .top)
+            }
         }
         .tint(RecorderTheme.accent)
         .frame(minWidth: 940, minHeight: 680)
@@ -81,17 +91,24 @@ struct ContentView: View {
             Button("확인") { model.errorMessage = nil }
         } message: { Text(model.errorMessage ?? "") }
         .onChange(of: model.selectedID) { _, _ in
-            player?.pause(); player = nil; isPlaying = false
+            playback.reset()
+            expandsRecordingControls = false
+            if let stored = model.selected, stored.meeting.audioFile != nil { playback.prepare(stored) }
             model.refreshSummary()
         }
         .onChange(of: model.activeStartedAt) { _, date in
             if date != nil { tab = "transcript"; followLive = true; search = "" }
         }
         .onChange(of: model.phase) { _, phase in
-            if phase != .idle { player?.pause(); isPlaying = false }
+            if phase != .idle { playback.pause() }
+            else { expandsRecordingControls = false }
         }
         .onReceive(NotificationCenter.default.publisher(for: .AVPlayerItemDidPlayToEndTime)) { notification in
-            if let item = notification.object as? AVPlayerItem, item === player?.currentItem { isPlaying = false }
+            playback.finished(notification)
+        }
+        .onDisappear { playback.reset() }
+        .onChange(of: playback.errorMessage) { _, message in
+            if let message { model.errorMessage = message }
         }
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
             model.refreshNotificationPermission()
@@ -114,6 +131,20 @@ struct ContentView: View {
                     Text("대화가 기록이 되는 곳").font(.system(size: 11)).foregroundStyle(.secondary)
                 }
             }.padding(.horizontal, 20).padding(.top, 20).padding(.bottom, 24)
+            Button {
+                model.selectedID = nil
+                model.title = ""
+                search = ""
+                tab = "transcript"
+                followLive = true
+            } label: {
+                Label("새 회의", systemImage: "plus").frame(maxWidth: .infinity)
+            }
+            .buttonStyle(.borderedProminent)
+            .controlSize(.large)
+            .keyboardShortcut("n", modifiers: .command)
+            .disabled(model.isBusy)
+            .padding(.horizontal, 20).padding(.bottom, 16)
             HStack(spacing: 8) {
                 Image(systemName: "magnifyingglass").foregroundStyle(.secondary)
                 TextField("회의 검색", text: $search).textFieldStyle(.plain).accessibilityLabel("회의 제목 검색")
@@ -179,7 +210,7 @@ struct ContentView: View {
 
     private func deleteMeeting(_ stored: StoredMeeting) {
         let wasSelected = model.selectedID == stored.id
-        if wasSelected { player?.pause(); player = nil; isPlaying = false }
+        if wasSelected { playback.reset() }
         if model.moveMeetingToTrash(stored.id), wasSelected,
            !filteredMeetings.contains(where: { $0.id == model.selectedID }) {
             model.selectedID = filteredMeetings.first?.id
@@ -210,6 +241,20 @@ struct ContentView: View {
         }.padding(.vertical, 8)
     }
 
+    private var collapsedRecordingControls: some View {
+        HStack(spacing: 10) {
+            Image(systemName: "waveform.and.mic").foregroundStyle(.secondary)
+            Text(model.recordingTarget?.name ?? "다음 녹음 준비")
+                .font(.system(size: 12, weight: .medium))
+            Text(model.microphoneEnabled ? "내 마이크 켜짐" : "내 마이크 꺼짐")
+                .font(.system(size: 11)).foregroundStyle(.secondary)
+            Spacer()
+            Button { expandsRecordingControls = true } label: {
+                Label("녹음 준비 펼치기", systemImage: "chevron.down")
+            }.buttonStyle(.borderless).font(.system(size: 12))
+        }.padding(.horizontal, 4).padding(.vertical, 3)
+    }
+
     private var recordingControls: some View {
         VStack(alignment: .leading, spacing: 16) {
             HStack {
@@ -223,6 +268,11 @@ struct ContentView: View {
                     }
                 }
                 phaseBadge
+                if !model.isBusy && model.selected != nil {
+                    Button { expandsRecordingControls = false } label: {
+                        Label("접기", systemImage: "chevron.up")
+                    }.buttonStyle(.borderless).font(.caption).accessibilityLabel("녹음 준비 접기")
+                }
             }
             HStack(spacing: 20) {
                 TextField("어떤 회의인가요?", text: $model.title).textFieldStyle(.plain)
@@ -403,7 +453,8 @@ struct ContentView: View {
                     Button("Finder에서 보기", action: model.revealSelected)
                     if stored.meeting.audioFile != nil && stored.meeting.diarization?.state != .completed {
                         Divider()
-                        Button(FinalASR.enabled ? "최종 분석 재시도" : "참석자별 구분") { Task { await model.separateSelectedSpeakers() } }
+                        Button("화자 구분") { Task { await model.separateSelectedSpeakers() } }
+                            .help("기존 대화록에 화자 표시를 붙입니다.")
                             .disabled(model.isBusy || !SpeakerDiarizer.canAnalyze(stored))
                     }
                     Divider()
@@ -470,15 +521,15 @@ struct ContentView: View {
         ScrollViewReader { proxy in
             ScrollView {
                 if tab == "transcript" {
-                    let sections = TranscriptDocument.sections(stored.meeting)
-                    if sections.isEmpty && !model.selectedIsActive {
+                    let paragraphs = TranscriptDocument.playbackParagraphs(stored.meeting)
+                    if paragraphs.isEmpty && !model.selectedIsActive {
                         documentEmptyState(
                             title: "아직 대화록이 없습니다",
                             message: stored.meeting.audioFile != nil ? "이 녹음에서 인식된 말소리가 없습니다.\n아래에서 녹음 파일을 확인할 수 있습니다." : "녹음 중 인식된 대화가 여기에 표시됩니다.",
                             symbol: "text.bubble")
                     } else {
                         LazyVStack(alignment: .leading, spacing: 26) {
-                            ForEach(sections) { section in speakerSection(section) }
+                            ForEach(paragraphs) { paragraph in playbackParagraph(paragraph, in: stored) }
                             if model.selectedIsActive {
                                 ForEach(AudioSource.allCases, id: \.self) { source in
                                     let pending = model.pendingTranscript.text(for: source)
@@ -533,17 +584,37 @@ struct ContentView: View {
         }
     }
 
-    private func speakerSection(_ section: TranscriptSpeakerSection) -> some View {
-        let color: Color = section.source == .microphone ? RecorderTheme.accent : .teal
+    private func playbackParagraph(_ paragraph: TranscriptPlaybackParagraph, in stored: StoredMeeting) -> some View {
+        let color: Color = paragraph.source == .microphone ? RecorderTheme.accent : .teal
+        let active = playback.meetingID == stored.id && playback.hasStarted &&
+            playback.position >= paragraph.start && playback.position < paragraph.end
         return HStack(alignment: .top, spacing: 14) {
-            Image(systemName: section.source == .microphone ? "person.fill" : "person.wave.2.fill")
+            Image(systemName: paragraph.source == .microphone ? "person.fill" : "person.wave.2.fill")
                 .font(.system(size: 13)).foregroundStyle(color).frame(width: 32, height: 32)
                 .background(color.opacity(0.09), in: RoundedRectangle(cornerRadius: 10))
             VStack(alignment: .leading, spacing: 10) {
-                Text(section.label).font(.system(size: 12, weight: .semibold)).foregroundStyle(color).padding(.top, 7)
-                Text(section.text).font(.system(size: 14)).lineSpacing(7).foregroundStyle(.primary.opacity(0.9))
+                HStack(spacing: 10) {
+                    Text(paragraph.label).font(.system(size: 12, weight: .semibold)).foregroundStyle(color)
+                    Button {
+                        playback.seek(to: paragraph.start, in: stored, autoplay: true)
+                    } label: {
+                        Label(TranscriptMarkdown.timestamp(paragraph.start), systemImage: active ? "speaker.wave.2.fill" : "play.circle")
+                            .font(.system(size: 11, weight: .medium, design: .monospaced))
+                    }.buttonStyle(.borderless)
+                        .disabled(model.isBusy || stored.meeting.audioFile == nil)
+                        .help("이 문단의 녹음 재생")
+                        .accessibilityLabel(TranscriptMarkdown.timestamp(paragraph.start) + "부터 문단 재생")
+                        .accessibilityValue(active ? "현재 재생 구간" : "")
+                    Spacer()
+                    Button { model.copyText(paragraph.text, message: "문단 복사됨") } label: {
+                        Image(systemName: "doc.on.doc").font(.system(size: 11))
+                    }.buttonStyle(.plain).foregroundStyle(.secondary)
+                        .help("문단 복사").accessibilityLabel("문단 복사")
+                }.padding(.top, 7)
+                Text(paragraph.text).font(.system(size: 14)).lineSpacing(7).foregroundStyle(.primary.opacity(0.9))
             }.frame(maxWidth: .infinity, alignment: .leading)
-        }
+        }.padding(10)
+            .background(active ? RecorderTheme.accent.opacity(0.07) : .clear, in: RoundedRectangle(cornerRadius: 10))
     }
 
     private func documentEmptyState(title: String, message: String, symbol: String) -> some View {
@@ -574,33 +645,34 @@ struct ContentView: View {
         VStack(spacing: 0) {
             Divider()
             HStack(spacing: 12) {
-                Button {
-                    if isPlaying { player?.pause(); isPlaying = false }
-                    else {
-                        if player == nil { player = AVPlayer(url: stored.directory.appendingPathComponent("audio.m4a")) }
-                        if let item = player?.currentItem, item.duration.seconds.isFinite,
-                           item.currentTime().seconds >= item.duration.seconds - 0.1 { player?.seek(to: .zero) }
-                        player?.play(); isPlaying = true
-                    }
-                } label: {
-                    Image(systemName: isPlaying ? "pause.fill" : "play.fill").font(.system(size: 12))
+                Button { playback.toggle(stored) } label: {
+                    Image(systemName: playback.isPlaying ? "pause.fill" : "play.fill").font(.system(size: 12))
                         .foregroundStyle(RecorderTheme.accent).frame(width: 34, height: 34)
                         .background(RecorderTheme.accent.opacity(0.09), in: Circle())
-                }.buttonStyle(.plain).disabled(model.isBusy).accessibilityLabel(isPlaying ? "녹음 일시정지" : "녹음 재생")
-                VStack(alignment: .leading, spacing: 3) {
-                    Text("녹음 파일").font(.system(size: 11, weight: .medium))
-                    Text("M4A" + (stored.meeting.endedAt.map { " · " + TranscriptMarkdown.timestamp($0.timeIntervalSince(stored.meeting.startedAt)) } ?? ""))
-                        .font(.system(size: 10)).foregroundStyle(.secondary).monospacedDigit()
+                }.buttonStyle(.plain).disabled(model.isBusy)
+                    .accessibilityLabel(playback.isPlaying ? "녹음 일시정지" : "녹음 재생")
+                Button { playback.skip(-10, in: stored) } label: { Image(systemName: "gobackward.10") }
+                    .buttonStyle(.borderless).disabled(model.isBusy).help("10초 뒤로").accessibilityLabel("10초 뒤로")
+                VStack(spacing: 3) {
+                    Slider(value: Binding(get: { playback.position }, set: { playback.scrubPosition($0, in: stored) }),
+                           in: 0...max(1, playback.duration), onEditingChanged: { playback.scrub($0, in: stored) })
+                        .disabled(model.isBusy || playback.duration <= 0).accessibilityLabel("녹음 재생 위치")
+                        .accessibilityValue(TranscriptMarkdown.timestamp(playback.position))
+                    HStack {
+                        Text(TranscriptMarkdown.timestamp(playback.position))
+                        Spacer()
+                        Text(TranscriptMarkdown.timestamp(playback.duration))
+                    }.font(.system(size: 10, design: .monospaced)).foregroundStyle(.secondary)
                 }
-                Spacer()
-                Button { model.copyPath(stored.directory.appendingPathComponent("audio.m4a")) } label: {
-                    Label("음성 경로 복사", systemImage: "doc.on.doc").font(.system(size: 11))
-                }.buttonStyle(.plain).foregroundStyle(.secondary)
-                Button(action: model.revealSelected) { Image(systemName: "folder").font(.system(size: 13)) }
-                    .buttonStyle(.plain).foregroundStyle(.secondary).padding(.leading, 5)
-                    .help("Finder에서 파일 보기").accessibilityLabel("Finder에서 파일 보기")
+                Button { playback.skip(10, in: stored) } label: { Image(systemName: "goforward.10") }
+                    .buttonStyle(.borderless).disabled(model.isBusy).help("10초 앞으로").accessibilityLabel("10초 앞으로")
+                Menu {
+                    Button("음성 경로 복사") { model.copyPath(stored.directory.appendingPathComponent("audio.m4a")) }
+                    Button("Finder에서 보기", action: model.revealSelected)
+                } label: { Image(systemName: "ellipsis").frame(width: 24, height: 24) }
+                    .menuStyle(.borderlessButton).fixedSize().accessibilityLabel("녹음 파일 더 보기")
             }.padding(.horizontal, 24).padding(.vertical, 12)
-        }
+        }.onAppear { playback.prepare(stored) }
     }
 
     private var workspaceFooter: some View {
@@ -629,6 +701,9 @@ struct ContentView: View {
 private struct RecorderSettingsView: View {
     @ObservedObject var model: RecorderModel
     @Environment(\.dismiss) private var dismiss
+    @State private var showsConnectionDetails = false
+
+    private var connectionGroups: [MCPClientGroup] { MCPClientPresentation.groups(model.mcpClients) }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -643,11 +718,8 @@ private struct RecorderSettingsView: View {
             Divider()
             Form {
                 Section {
-                    Picker("최종 대화록", selection: Binding(get: { model.finalASREngine }, set: model.setFinalASREngine)) {
-                        Text("정확도 우선 · Qwen3-ASR 1.7B").tag("qwen17")
-                        Text("빠른 저장 · Whisper turbo").tag("whisper")
-                    }.disabled(model.isBusy)
-                    Text(model.finalASREngine == "whisper" ? "실시간 전사 결과를 화자별로 정리해 저장합니다." : "회의 중에는 Whisper로 표시하고, 종료 후 Qwen으로 최종 전사합니다.")
+                    LabeledContent("음성 인식", value: "Whisper · 실시간")
+                    Text("녹음 중 확정된 문장을 그대로 저장합니다. 종료할 때는 마지막 미확정 문장만 마무리합니다.")
                         .font(.caption).foregroundStyle(.secondary)
                 } header: { Label("전사", systemImage: "text.bubble") }
                 Section {
@@ -672,10 +744,23 @@ private struct RecorderSettingsView: View {
                         Text("이 Mac의 임시 연결 상태에 접근할 수 없습니다.")
                             .font(.caption).foregroundStyle(.secondary)
                     } else if !model.mcpClients.isEmpty {
-                        Label("MCP 클라이언트 연결됨", systemImage: "checkmark.circle.fill")
-                            .font(.callout.weight(.medium)).foregroundStyle(.green)
-                        Text(model.mcpClients.map(\.name).joined(separator: ", "))
-                            .font(.caption).foregroundStyle(.secondary).textSelection(.enabled)
+                        ForEach(connectionGroups) { group in
+                            HStack {
+                                Label(group.name + " 연결됨", systemImage: "checkmark.circle.fill")
+                                    .font(.callout.weight(.medium)).foregroundStyle(.green)
+                                Spacer()
+                                Text("\(group.sessions.count)개 세션").font(.caption).foregroundStyle(.secondary)
+                            }
+                        }
+                        DisclosureGroup("연결 세부정보", isExpanded: $showsConnectionDetails) {
+                            ForEach(connectionGroups) { group in
+                                VStack(alignment: .leading, spacing: 4) {
+                                    Text(group.name).font(.caption.weight(.medium))
+                                    Text(Array(Set(group.sessions.map(\.name))).sorted().joined(separator: ", "))
+                                    Text("세션 \(group.sessions.count)개" + (group.versions.isEmpty ? "" : " · 버전 " + group.versions.joined(separator: ", ")))
+                                }.font(.caption).foregroundStyle(.secondary).textSelection(.enabled)
+                            }
+                        }.font(.caption)
                     } else {
                         Label("확인된 MCP 연결이 없습니다", systemImage: "circle.dashed")
                             .font(.callout.weight(.medium)).foregroundStyle(.secondary)

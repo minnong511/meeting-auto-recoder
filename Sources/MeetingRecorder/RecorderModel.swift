@@ -13,8 +13,7 @@ final class RecorderModel: ObservableObject {
     @Published var selectedID: UUID?
     @Published var title = ""
     @Published var statusText = "녹음할 준비가 되었습니다"
-    @Published var supportText = FinalASR.supportLabel
-    @Published private(set) var finalASREngine = FinalASR.engineChoice
+    @Published var supportText = SpeechSupport.supportLabel
     @Published var errorMessage: String?
     @Published var metrics = CaptureMetrics()
     @Published var pendingTranscript = PendingTranscript()
@@ -183,14 +182,7 @@ final class RecorderModel: ObservableObject {
     func checkSupport() async {
         supportText = "Whisper 모델 확인 중…"
         let result = await SpeechSupport.inspect()
-        supportText = result.koreanInstalled ? FinalASR.supportLabel : "Whisper large-v3-turbo · 첫 녹음 시 약 627 MB 다운로드"
-    }
-
-    func setFinalASREngine(_ engine: String) {
-        guard !isBusy else { return }
-        FinalASR.selectEngine(engine)
-        finalASREngine = FinalASR.engineChoice
-        supportText = FinalASR.supportLabel
+        supportText = result.koreanInstalled ? SpeechSupport.supportLabel : "Whisper large-v3-turbo · 첫 녹음 시 약 627 MB 다운로드"
     }
 
     func begin() {
@@ -221,9 +213,6 @@ final class RecorderModel: ObservableObject {
 
     private func startRecording() async {
         do {
-            if FinalASR.enabled && !FinalASR.isInstalled {
-                throw RecorderError.message("최종 전사 모델 설치가 필요합니다. bash scripts/setup-local-asr.sh \(FinalASR.engineChoice)를 실행한 뒤 다시 시작하세요.")
-            }
             statusText = "마이크 권한 확인 중…"
             if microphoneEnabled {
                 let granted = await AVCaptureDevice.requestAccess(for: .audio)
@@ -248,9 +237,8 @@ final class RecorderModel: ObservableObject {
             guard let root else { throw RecorderError.message("저장 폴더를 선택해 주세요.") }
             let stored = try MeetingStore(root: root).create(title: title)
             current = stored
-            current?.meeting.diarization = SpeakerDiarizationSummary(state: .pending)
             current?.meeting.recordingTarget = target
-            current?.meeting.transcriptionEngine = "WhisperKit · large-v3-v20240930_626MB · ko"
+            current?.meeting.transcriptionEngine = SpeechSupport.engineDescription
             selectedID = stored.id
             updateList(stored)
             for source in AudioSource.allCases {
@@ -258,6 +246,10 @@ final class RecorderModel: ObservableObject {
                     self?.receive(segment, final: final, meetingID: stored.id)
                 }, onError: { [weak self] error in
                     Task { @MainActor in self?.transcriptionFailed(source: source, error: error, meetingID: stored.id) }
+                }, onWarning: { [weak self] warning in
+                    guard self?.current?.id == stored.id else { return }
+                    self?.current?.meeting.warnings.append(warning)
+                    self?.persist()
                 })
                 lanes[source] = lane
             }
@@ -277,7 +269,7 @@ final class RecorderModel: ObservableObject {
             activeStartedAt = Date()
             phase = .recording
             statusText = "\(target.name) 녹음·실시간 전사 중"
-            supportText = FinalASR.supportLabel
+            supportText = SpeechSupport.supportLabel
             if let limit = recordingLimit {
                 autoStopTask = Task { [weak self] in
                     do { try await Task.sleep(for: .seconds(limit)) } catch { return }
@@ -424,18 +416,10 @@ final class RecorderModel: ObservableObject {
                 let warnings = try await AudioExporter.export(chunks: stored.meeting.audioChunks, directory: stored.directory)
                 current?.meeting.audioFile = "audio.m4a"
                 current?.meeting.warnings.append(contentsOf: warnings)
-                // Save the durable audio before loading the optional speaker
-                // model. Pending/failed diarization keeps source chunks for retry.
-                persist()
-                if let input = current {
-                    do { current?.meeting = try await separateSpeakers(input) }
-                    catch {
-                        current?.meeting.diarization = SpeakerDiarizationSummary(state: .failed,
-                            error: error is CancellationError ? "화자 분석을 중단했습니다. 녹음과 대화록은 보관했습니다." : error.localizedDescription)
-                    }
-                }
+                // The live lane already finalized its last buffer above. Saving
+                // never runs a second recognizer or changes confirmed words.
                 current?.meeting.status = .completed
-                statusText = current?.meeting.diarization?.state == .completed ? "화자별 대화록과 M4A를 저장했습니다" : "M4A와 대화록 저장 완료 · 화자 분리는 다시 시도할 수 있습니다"
+                statusText = "실시간 대화록과 M4A를 저장했습니다"
             } catch {
                 current?.meeting.status = .failed
                 current?.meeting.error = error.localizedDescription

@@ -1,26 +1,26 @@
 #!/bin/bash
 set -euo pipefail
-RECORDER_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+RECORDER_ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 cd "$RECORDER_ROOT"
 export UV_CACHE_DIR="$RECORDER_ROOT/.runtime/uv-cache"
 export UV_PYTHON_INSTALL_DIR="$RECORDER_ROOT/.runtime/python"
 export HF_HUB_DISABLE_XET=1
 mkdir -p .runtime
 command -v uv >/dev/null || { echo 'uv가 필요합니다: https://docs.astral.sh/uv/getting-started/installation/' >&2; exit 1; }
-RECORDER_ENGINE="${1:-$(python3 -c 'import json; print(json.load(open("Resources/ASRSelection.json"))["engine"])')}"
+RECORDER_ENGINE="${1:-$(python3 -c 'import json; print(json.load(open("experiments/asr/ASRSelection.json"))["engine"])')}"
 case "$RECORDER_ENGINE" in
   cohere)
     RECORDER_RUNTIME="$RECORDER_ROOT/.runtime/cohere"
     if [ ! -x "$RECORDER_RUNTIME/bin/python" ]; then uv venv --python 3.14 "$RECORDER_RUNTIME"; fi
-    uv pip install --python "$RECORDER_RUNTIME/bin/python" --constraint scripts/cohere-runtime-requirements.lock.txt mlx-speech==0.5.4
+    uv pip install --python "$RECORDER_RUNTIME/bin/python" --constraint experiments/asr/cohere-runtime-requirements.lock.txt mlx-speech==0.5.4
     ;;
   qwen17)
     RECORDER_RUNTIME="$RECORDER_ROOT/.runtime/asr"
     if [ ! -x "$RECORDER_RUNTIME/bin/python" ]; then uv venv --python 3.11 "$RECORDER_RUNTIME"; fi
-    uv pip install --python "$RECORDER_RUNTIME/bin/python" --constraint scripts/asr-benchmark-requirements.lock.txt mlx-audio==0.6.2
+    uv pip install --python "$RECORDER_RUNTIME/bin/python" --constraint experiments/asr/asr-benchmark-requirements.lock.txt mlx-audio==0.6.2
     ;;
   whisper) echo 'Whisper uses the existing native model cache.'; exit 0 ;;
-  *) echo 'Unknown final ASR engine' >&2; exit 1 ;;
+  *) echo 'Unknown experimental ASR engine' >&2; exit 1 ;;
 esac
 RECORDER_WORKSPACE="$RECORDER_ROOT" RECORDER_ASR_ENGINE="$RECORDER_ENGINE" HF_HOME="$RECORDER_ROOT/.runtime/hf" "$RECORDER_RUNTIME/bin/python" - <<'PY'
 import json,os,shutil,subprocess
@@ -28,7 +28,7 @@ from pathlib import Path
 from huggingface_hub import snapshot_download
 root=Path(os.environ['RECORDER_WORKSPACE'])
 engine=os.environ['RECORDER_ASR_ENGINE']
-if engine=='selected': engine=json.loads((root/'Resources/ASRSelection.json').read_text())['engine']
+if engine=='selected': engine=json.loads((root/'experiments/asr/ASRSelection.json').read_text())['engine']
 if engine=='whisper':
     print('Whisper uses the existing native model cache.'); raise SystemExit(0)
 if engine=='cohere':
@@ -44,7 +44,7 @@ elif engine=='qwen17':
     provenance=root/'.build/asr-benchmark/model-revisions.json'
     recorded=json.loads(provenance.read_text()) if provenance.exists() else []
     can_copy=any(m[1]==revision for m in recorded)
-else: raise ValueError('Unsupported final ASR engine: '+engine)
+else: raise ValueError('Unsupported experimental ASR engine: '+engine)
 target=root/'.runtime/models'/engine
 marker=target/'.ready-revision'
 if not marker.exists() or marker.read_text()!=revision:

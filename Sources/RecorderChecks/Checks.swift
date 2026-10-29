@@ -41,11 +41,12 @@ enum Checks {
             ("Whisper 긴 발언의 경계 문맥과 단어 중복 방지", { try suite.whisperOverlap() }),
             ("Whisper 단어 시간·불확실 전사 보존·무음 출력 제외", { try suite.whisperMapping() }),
             ("Whisper 마이크 확정·빈 입력 종료·취소", { try await suite.whisperLifecycle() }),
-            ("최종 전사 창·화자 경계·짧은 대답 보존", { try suite.finalTranscriptBoundaries() }),
-            ("최종 전사 워커 왕복·마이크 무음·실패 보존·취소", { try await suite.finalTranscriptWorker() }),
+            ("실시간 반복 오류 표시·일반 발언 보존·다음 구간 계속", { try suite.liveRepetitionGuard() }),
             ("UTF-8 Markdown·메타데이터 왕복", { try suite.roundTrip() }),
             ("무음·기호 필터와 실제 짧은 발언 보존", { try suite.transcriptCleanup() }),
-            ("시간·상태 로그 없는 화자별 대화록", { try suite.speakerDocument() }),
+            ("발언 시간순 대화록·교대 화자·고유 구간", { try suite.speakerDocument() }),
+            ("문단 재생 시각·화자 교대·원문 보존", { try suite.playbackParagraphs() }),
+            ("연결 앱 묶음·세션 수·버전·정렬", { try suite.connectionPresentation() }),
             ("기존 기록 이전과 음성·요약 보존", { try suite.legacyMigration() }),
             ("사용자가 편집한 Markdown 보존", { try suite.editedMarkdownPreserved() }),
             ("한 문장 안의 세 화자와 내 발언 분리", { try suite.threeSpeakers() }),
@@ -107,6 +108,7 @@ final class RecorderChecks {
         let b = mapper.map([TranscriptionSegment(words: [WordTiming(word: " 설정", tokens: [], start: 0, end: 0.3, probability: 1), WordTiming(word: " 확인", tokens: [], start: 0.4, end: 1, probability: 1)])], request: next, source: .system)
         try expect(a.text == "환경변수 설정" && b.text == "확인", "경계 단어가 중복되거나 빠짐")
         try expect(abs(b.words![0].start - 12.9) < 0.001, "원본 단어 시간 오프셋 손실")
+        try expect(abs(b.start - 12.9) < 0.001, "겹친 입력 창 시작이 새 발언 시각으로 저장됨")
     }
 
     func whisperMapping() throws {
@@ -123,6 +125,25 @@ final class RecorderChecks {
         var uncertainMapper = WhisperTranscriptMapper()
         let uncertain = uncertainMapper.map([TranscriptionSegment(end: 1, text: "시간 불명", words: [WordTiming(word: "시간 불명", tokens: [], start: .nan, end: 1, probability: 1)])], request: request, source: .system)
         try expect(uncertain.text == "시간 불명" && uncertain.words == nil, "잘못된 단어 시간이 있는 전사를 삭제함")
+    }
+
+    func liveRepetitionGuard() throws {
+        let loop = "우리가 AI에서 " + Array(repeating: "얻", count: 252).joined(separator: " ")
+        try expect(TranscriptText.isRepetitionLoop(loop), "실제 녹음의 반복 루프를 감지하지 못함")
+        try expect(TranscriptText.isRepetitionLoop(Array(repeating: "같은 문장 반복", count: 12).joined(separator: " ")), "여러 단어의 반복 루프를 감지하지 못함")
+        for text in ["네 네 네", "제가 제가 설명할게요", "SAP ERP SAP ERP", "3.5%", "C++", "감사합니다"] {
+            try expect(!TranscriptText.isRepetitionLoop(text), "실제 짧은 발언을 반복 오류로 판단함: \(text)")
+        }
+        var mapper = WhisperTranscriptMapper()
+        let preview = WhisperAudioWindow.Request(samples: Array(repeating: 0, count: 16_000), start: 10, commitThrough: nil)
+        let partial = mapper.map([TranscriptionSegment(end: 1, text: loop)], request: preview, source: .system)
+        try expect(partial.text.isEmpty && !mapper.requiresReview, "반복 임시 결과를 확정하거나 표시함")
+        let final = WhisperAudioWindow.Request(samples: preview.samples, start: 10, commitThrough: 11)
+        let marked = mapper.map([TranscriptionSegment(end: 1, text: loop)], request: final, source: .system)
+        try expect(marked.text == "[음성 인식 확인 필요]" && mapper.requiresReview, "반복 루프를 그대로 저장하거나 확인 표시 없이 삭제함")
+        let next = WhisperAudioWindow.Request(samples: preview.samples, start: 11, commitThrough: 12)
+        let continued = mapper.map([TranscriptionSegment(end: 1, text: "다음 발언입니다.")], request: next, source: .system)
+        try expect(continued.text == "다음 발언입니다." && !mapper.requiresReview, "오류 구간 이후의 전사를 멈추거나 경고 상태가 남음")
     }
 
     @MainActor func whisperLifecycle() async throws {
@@ -500,8 +521,10 @@ final class RecorderChecks {
         ]
         meeting.warnings = ["테스트 경고"]
         let rendered = TranscriptMarkdown.render(meeting)
-        let expected = "# 회의 제목\n\n## 상대방 발언\n\n월요일에 진행합니다. 장소는 회의실입니다.\n\n## 내 발언\n\n일정을 확인하겠습니다.\n"
-        try expect(rendered == expected, "화자별 발언 순서·묶음 또는 로그 제거 오류")
+        let expected = "# 회의 제목\n\n## 상대방 발언\n\n월요일에 진행합니다.\n\n## 내 발언\n\n일정을 확인하겠습니다.\n\n## 상대방 발언\n\n장소는 회의실입니다.\n"
+        try expect(rendered == expected, "교대 발언의 시간순 또는 로그 제거 오류")
+        let sections = TranscriptDocument.sections(meeting)
+        try expect(sections.count == 3 && Set(sections.map(\.id)).count == 3, "같은 화자가 다시 말할 때 구간 식별자가 중복됨")
         try expect(TranscriptMarkdown.render(Meeting(title: "빈 회의")) == "# 빈 회의\n", "빈 발언·상태 안내가 대화록에 저장됨")
         var pending = PendingTranscript()
         pending.receive(TranscriptSegment(source: .system, start: 0, end: 1, text: "..."), final: false)

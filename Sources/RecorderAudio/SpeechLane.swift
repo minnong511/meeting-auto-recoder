@@ -5,6 +5,8 @@ import RecorderCore
 import WhisperKit
 
 public struct SpeechSupport: Codable, Sendable {
+    public static let supportLabel = "Whisper large-v3-turbo · 실시간 결과 저장 · 로컬"
+    public static let engineDescription = "WhisperKit · large-v3-v20240930_626MB · ko · live-only"
     public var engineAvailable: Bool
     public var koreanSupported: Bool
     public var koreanInstalled: Bool
@@ -12,8 +14,8 @@ public struct SpeechSupport: Codable, Sendable {
     public var engine = "WhisperKit"
     public var model = WhisperEngine.variant
     public var cachePath = WhisperEngine.cacheRoot.path
-    public var finalTranscriptionModel = FinalASR.enabled ? FinalASR.modelName : "Whisper large-v3-turbo"
-    public var finalTranscriptionInstalled = !FinalASR.enabled || FinalASR.isInstalled
+    public var transcriptionMode = "live-only"
+    public var postProcessingEnabled = false
 
     public static func inspect() async -> SpeechSupport {
         let path = try? String(contentsOf: WhisperEngine.readyMarker, encoding: .utf8)
@@ -81,14 +83,21 @@ private actor WhisperEngine {
         defer { release() }
         try Task.checkCancellation()
         guard let kit else { throw RecorderError.message("Whisper 모델이 준비되지 않았습니다.") }
-        let options = DecodingOptions(verbose: false, task: .transcribe, language: "ko",
+        var options = DecodingOptions(verbose: false, task: .transcribe, language: "ko",
             temperatureFallbackCount: 2, usePrefillPrompt: true, detectLanguage: false,
             skipSpecialTokens: true, withoutTimestamps: false, wordTimestamps: wordTimestamps,
             windowClipTime: 0, suppressBlank: true,
             // Judge the completed decode: early first-token rejection produced
             // empty output for audible Korean passages in the local lecture.
             firstTokenLogProbThreshold: nil, concurrentWorkerCount: 1)
-        let result = try await kit.transcribe(audioArray: request.samples, decodeOptions: options)
+        var result = try await kit.transcribe(audioArray: request.samples, decodeOptions: options)
+        // Retry only the current uncommitted window, never a saved transcript.
+        // Partial previews wait for finalization instead of doubling live work.
+        if request.isFinal, result.flatMap(\.segments).contains(where: { TranscriptText.isRepetitionLoop($0.text) }) {
+            try Task.checkCancellation()
+            options.temperature = 0.2
+            result = try await kit.transcribe(audioArray: request.samples, decodeOptions: options)
+        }
         try Task.checkCancellation()
         return result.flatMap(\.segments)
     }
@@ -103,10 +112,12 @@ private actor WhisperEngine {
 /// Restore source times and commit overlapping word ranges only once.
 public struct WhisperTranscriptMapper {
     public private(set) var committedThrough: Double = -.infinity
+    public private(set) var requiresReview = false
     public init() {}
     public mutating func map(_ results: [TranscriptionSegment], request: WhisperAudioWindow.Request,
                              source: AudioSource) -> TranscriptSegment {
         let accepted = results.filter { !($0.noSpeechProb > 0.6 && $0.avgLogprob < -1) }
+        requiresReview = false
         let lower = committedThrough
         let upper = request.commitThrough ?? request.end
         var words: [TranscriptWord] = []
@@ -114,6 +125,14 @@ public struct WhisperTranscriptMapper {
         var hasCoarseText = false
         var mappedEnd = upper
         for result in accepted {
+            if TranscriptText.isRepetitionLoop(result.text) {
+                if request.isFinal {
+                    parts.append(" [음성 인식 확인 필요] ")
+                    hasCoarseText = true
+                    requiresReview = true
+                }
+                continue
+            }
             if let timing = result.words, !timing.isEmpty,
                timing.allSatisfy({ $0.start.isFinite && $0.end.isFinite && $0.end >= $0.start }) {
                 for item in timing {
@@ -133,7 +152,8 @@ public struct WhisperTranscriptMapper {
                 mappedEnd = max(mappedEnd, min(request.end, request.start + Double(result.end)))
             }
         }
-        var segment = TranscriptSegment(source: source, start: request.start, end: mappedEnd, text: parts.joined())
+        let mappedStart = !hasCoarseText ? words.first?.start ?? request.start : max(request.start, lower)
+        var segment = TranscriptSegment(source: source, start: mappedStart, end: mappedEnd, text: parts.joined())
         if request.isFinal && !hasCoarseText && !words.isEmpty { segment.words = words }
         if request.isFinal { committedThrough = max(committedThrough, mappedEnd) }
         return segment
@@ -161,7 +181,8 @@ public final class SpeechLane {
 
     public static func create(source: AudioSource, emitPartials: Bool = true,
                               onResult: @escaping @MainActor (TranscriptSegment, Bool) -> Void,
-                              onError: @escaping (String) -> Void) async throws -> SpeechLane {
+                              onError: @escaping (String) -> Void,
+                              onWarning: @escaping @MainActor (String) -> Void = { _ in }) async throws -> SpeechLane {
         let (stream, continuation) = AsyncStream<Input>.makeStream(bufferingPolicy: .bufferingOldest(1024))
         let lane = SpeechLane(source: source, continuation: continuation)
         lane.resultTask = Task {
@@ -173,6 +194,9 @@ public final class SpeechLane {
                     wordTimestamps: request.isFinal || mapper.committedThrough > request.start)
                 let before = mapper.committedThrough
                 let segment = mapper.map(result, request: request, source: source)
+                if mapper.requiresReview {
+                    await onWarning("\(source.label) \(TranscriptMarkdown.timestamp(segment.start)) 부근의 반복 인식 오류로 확인 표시를 남겼습니다. 원본 음성은 보존됩니다.")
+                }
                 if CommandLine.arguments.contains("--window-diagnostics") {
                     let stats: [String: Any] = ["start": request.start, "end": request.end,
                         "commitBefore": before.isFinite ? before : -1, "outputCharacters": segment.text.count,

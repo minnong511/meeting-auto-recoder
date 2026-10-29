@@ -9,7 +9,6 @@ import SwiftUI
 enum Launch {
     @MainActor
     static func main() async {
-        if let path = argument("--final-asr-config") { setenv("MEETING_RECORDER_ASR_CONFIG", path, 1) }
         if CommandLine.arguments.contains("--notification-status") || CommandLine.arguments.contains("--capture-content") || argument("--capture-app-test") != nil {
             do {
                 let data: Data
@@ -71,7 +70,8 @@ enum Launch {
                         if let data = try? JSONEncoder().encode(event) { print(String(decoding: data, as: UTF8.self)); fflush(stdout) }
                     }
                     if final { segments.append(segment) }
-                }, onError: { error in Task { @MainActor in speechErrors.append(error) } })
+                }, onError: { error in Task { @MainActor in speechErrors.append(error) } },
+                   onWarning: { warning in fputs("\(warning)\n", stderr) })
                 do {
                     let file = try AVAudioFile(forReading: url)
                     while file.framePosition < file.length {
@@ -93,14 +93,13 @@ enum Launch {
                 encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
                 if CommandLine.arguments.contains("--with-speakers") {
                     var meeting = Meeting(title: url.deletingPathExtension().lastPathComponent)
-                    meeting.transcriptionEngine = "WhisperKit · large-v3-v20240930_626MB · ko"
+                    meeting.transcriptionEngine = SpeechSupport.engineDescription
                     meeting.segments = segments
                     meeting.status = .completed
                     let turns = try await Task.detached(priority: .utility) {
                         try await SpeakerDiarizer.turns(in: url, modelsDirectory: modelsDirectory)
                     }.value
-                    meeting = try await FinalASR.refine(systemAudio: url, turns: turns, meeting: meeting,
-                        progress: { message in fputs("\(message)\n", stderr) })
+                    meeting = SpeakerAttribution.apply(turns, to: meeting)
                     print(String(decoding: try encoder.encode(meeting), as: UTF8.self))
                 } else if !streamEvents { print(String(decoding: try encoder.encode(segments), as: UTF8.self)) }
                 if segments.isEmpty { exit(2) }

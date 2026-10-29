@@ -8,7 +8,7 @@ from pathlib import Path
 
 from huggingface_hub import snapshot_download
 
-ROOT = Path(__file__).resolve().parents[1] / ".build/asr-benchmark"
+ROOT = Path(__file__).resolve().parents[2] / ".build/asr-benchmark"
 REVISION = "70bb2e84b976b7e960aa89f1c648e09c59f894dd"
 ROOT.mkdir(parents=True, exist_ok=True)
 base = f"https://huggingface.co/datasets/google/fleurs/resolve/{REVISION}/data/ko_kr"
