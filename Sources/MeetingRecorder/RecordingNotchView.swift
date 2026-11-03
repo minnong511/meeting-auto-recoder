@@ -7,7 +7,6 @@ struct RecordingNotchView: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     private var width: CGFloat { state.panelWidth }
-    private var height: CGFloat { state.expanded ? 148 : 48 }
     private var notchSpace: CGFloat { state.hasNotch ? min(max(state.notchWidth, 0), width) : 0 }
     private var sideWidth: CGFloat { max(0, (width - notchSpace) / 2) }
     private var phaseText: String {
@@ -24,14 +23,17 @@ struct RecordingNotchView: View {
             topStrip
             if state.expanded {
                 expandedContent
-                    .transition(.opacity.combined(with: .offset(y: -6)))
+                    .transition(.opacity)
             }
         }
-        .frame(width: width, height: height, alignment: .top)
-        .background(NotchBackdrop().fill(Color.black))
-        .contentShape(NotchBackdrop())
+        // This host has a constant size and is clipped by the resizing AppKit
+        // container. Its top row therefore never moves while the panel grows.
+        .frame(width: width, height: 148, alignment: .top)
+        .contentShape(Rectangle())
+        .clipped()
         .onHover { state.hoverChanged?($0) }
         .accessibilityElement(children: .contain)
+        .ignoresSafeArea()
     }
 
     private var statusColor: Color {
@@ -213,27 +215,5 @@ struct RecordingNotchView: View {
         case .stopping: return "잠시만 기다려 주세요"
         case .ended: return "녹음이 종료되었습니다"
         }
-    }
-}
-
-private struct NotchBackdrop: InsettableShape {
-    var inset: CGFloat = 0
-    func inset(by amount: CGFloat) -> some InsettableShape {
-        var copy = self
-        copy.inset += amount
-        return copy
-    }
-    func path(in rect: CGRect) -> Path {
-        let bounds = rect.insetBy(dx: inset, dy: inset)
-        let radius = min(20, bounds.height / 2, bounds.width / 2)
-        var path = Path()
-        path.move(to: CGPoint(x: bounds.minX, y: bounds.minY))
-        path.addLine(to: CGPoint(x: bounds.maxX, y: bounds.minY))
-        path.addLine(to: CGPoint(x: bounds.maxX, y: bounds.maxY - radius))
-        path.addQuadCurve(to: CGPoint(x: bounds.maxX - radius, y: bounds.maxY), control: CGPoint(x: bounds.maxX, y: bounds.maxY))
-        path.addLine(to: CGPoint(x: bounds.minX + radius, y: bounds.maxY))
-        path.addQuadCurve(to: CGPoint(x: bounds.minX, y: bounds.maxY - radius), control: CGPoint(x: bounds.minX, y: bounds.maxY))
-        path.closeSubpath()
-        return path
     }
 }

@@ -1,5 +1,4 @@
 import AppKit
-import QuartzCore
 import SwiftUI
 
 /// The control process receives display-only state, never recording contents.
@@ -85,7 +84,7 @@ private final class RecordingIslandHelperController {
     private var lastBundleID: String?
     private var lastProcessID: Int32?
     private var animatedFrame: NSRect?
-    private var frameAnimationID: UUID?
+    private var frameTimer: Timer?
     private let expansionDuration = 0.24
 
     func start() {
@@ -170,7 +169,7 @@ private final class RecordingIslandHelperController {
             window.isReleasedWhenClosed = false
             window.level = .screenSaver
             window.collectionBehavior = [.canJoinAllSpaces, .canJoinAllApplications, .fullScreenAuxiliary, .stationary, .ignoresCycle]
-            window.contentView = IslandHelperHostingView(rootView: RecordingNotchView(state: state))
+            window.contentView = IslandPanelContentView(state: state)
             panel = window
         }
         positionPanel()
@@ -199,27 +198,41 @@ private final class RecordingIslandHelperController {
         // State messages arrive every second; they must not snap an in-flight
         // expansion to its final frame. Screen changes still apply immediately.
         if animatedFrame == newFrame { return }
+        frameTimer?.invalidate()
+        frameTimer = nil
+        animatedFrame = nil
         guard panel.frame != newFrame else { return }
-        if animated {
-            let id = UUID()
-            frameAnimationID = id
-            animatedFrame = newFrame
-            NSAnimationContext.runAnimationGroup { context in
-                context.duration = expansionDuration
-                context.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
-                panel.animator().setFrame(newFrame, display: true)
-            } completionHandler: { [weak self] in
-                Task { @MainActor in
-                    guard let self, self.frameAnimationID == id else { return }
-                    self.frameAnimationID = nil
+        guard animated else {
+            panel.setFrame(newFrame, display: true, animate: false)
+            return
+        }
+
+        // Derive both origin and height from the same value on every frame.
+        // NSWindow's animator and SwiftUI's layout otherwise interpolate their
+        // sizes independently, leaving a visible gap at the notch.
+        let startHeight = panel.frame.height
+        let startTime = ProcessInfo.processInfo.systemUptime
+        let animationTop = newFrame.maxY
+        animatedFrame = newFrame
+        let timer = Timer(timeInterval: 1.0 / 60.0, repeats: true) { [weak self, weak panel] timer in
+            MainActor.assumeIsolated {
+                guard let self, let panel, self.animatedFrame == newFrame else { timer.invalidate(); return }
+                let elapsed = ProcessInfo.processInfo.systemUptime - startTime
+                let progress = min(1, max(0, elapsed / self.expansionDuration))
+                let eased = progress * progress * (3 - 2 * progress)
+                let height = startHeight + (newFrame.height - startHeight) * eased
+                panel.setFrame(NSRect(x: newFrame.minX, y: animationTop - height, width: newFrame.width, height: height),
+                               display: true, animate: false)
+                if progress >= 1 {
+                    timer.invalidate()
+                    self.frameTimer = nil
                     self.animatedFrame = nil
                 }
             }
-        } else {
-            frameAnimationID = nil
-            animatedFrame = nil
-            panel.setFrame(newFrame, display: true, animate: false)
         }
+        timer.tolerance = 0.003
+        frameTimer = timer
+        RunLoop.main.add(timer, forMode: .common)
     }
 
     private func displayID(_ screen: NSScreen?) -> NSNumber? {
@@ -264,6 +277,7 @@ private final class RecordingIslandHelperController {
 
     private func shutdown() {
         collapseWork?.cancel()
+        frameTimer?.invalidate()
         panel?.orderOut(nil)
         panel?.close()
         NSApp.terminate(nil)
@@ -273,8 +287,66 @@ private final class RecordingIslandHelperController {
 private final class IslandHelperPanel: NSPanel {
     override var canBecomeKey: Bool { false }
     override var canBecomeMain: Bool { false }
+    // The controller calculates a frame on an attached screen, including the
+    // notch area. AppKit's usual visible-frame constraint can pull that frame
+    // away from the top edge while it is resized.
+    override func constrainFrameRect(_ frameRect: NSRect, to screen: NSScreen?) -> NSRect { frameRect }
 }
 
 private final class IslandHelperHostingView: NSHostingView<RecordingNotchView> {
+    override var safeAreaInsets: NSEdgeInsets { NSEdgeInsets(top: 0, left: 0, bottom: 0, right: 0) }
     override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
+}
+
+/// A fixed-height SwiftUI host is pinned to the top while this container is
+/// resized and clipped to the panel. The actual window still shrinks, so the
+/// transparent area below a collapsed island cannot intercept clicks.
+@MainActor
+private final class IslandPanelContentView: NSView {
+    private let hostingView: IslandHelperHostingView
+    override var isFlipped: Bool { true }
+    override var isOpaque: Bool { false }
+
+    init(state: RecordingIslandState) {
+        hostingView = IslandHelperHostingView(rootView: RecordingNotchView(state: state))
+        super.init(frame: .zero)
+        wantsLayer = true
+        layer?.masksToBounds = true
+        hostingView.sizingOptions = []
+        addSubview(hostingView)
+    }
+
+    required init?(coder: NSCoder) { nil }
+
+    override func setFrameSize(_ newSize: NSSize) {
+        super.setFrameSize(newSize)
+        needsLayout = true
+        needsDisplay = true
+    }
+
+    override func layout() {
+        super.layout()
+        hostingView.frame = NSRect(x: 0, y: 0, width: bounds.width, height: 148)
+    }
+
+    override func draw(_ dirtyRect: NSRect) {
+        super.draw(dirtyRect)
+        let width = bounds.width, height = bounds.height
+        let radius = min(20, height / 2, width / 2)
+        let curve = radius * 0.55228475
+        let path = NSBezierPath()
+        path.move(to: NSPoint(x: 0, y: 0))
+        path.line(to: NSPoint(x: width, y: 0))
+        path.line(to: NSPoint(x: width, y: height - radius))
+        path.curve(to: NSPoint(x: width - radius, y: height),
+                   controlPoint1: NSPoint(x: width, y: height - radius + curve),
+                   controlPoint2: NSPoint(x: width - radius + curve, y: height))
+        path.line(to: NSPoint(x: radius, y: height))
+        path.curve(to: NSPoint(x: 0, y: height - radius),
+                   controlPoint1: NSPoint(x: radius - curve, y: height),
+                   controlPoint2: NSPoint(x: 0, y: height - radius + curve))
+        path.close()
+        NSColor.black.setFill()
+        path.fill()
+    }
 }
