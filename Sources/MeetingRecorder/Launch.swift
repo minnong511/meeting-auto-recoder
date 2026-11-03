@@ -14,6 +14,18 @@ enum Launch {
             RecordingIslandHelper.run()
             return
         }
+        if let path = argument("--benchmark-polishing") {
+            guard let mode = LocalTranscriptPolisher.ComputeMode(rawValue: argument("--polish-compute") ?? "automatic") else {
+                fputs("--polish-compute: automatic 또는 cpu를 지정해 주세요.\n", stderr)
+                exit(2)
+            }
+            do {
+                let report = try await PolishingBenchmark.run(input: URL(fileURLWithPath: path),
+                    modelID: argument("--polish-model") ?? "qwen3.5:4b", mode: mode)
+                print(String(decoding: report, as: UTF8.self))
+            } catch { fputs("\(error.localizedDescription)\n", stderr); exit(1) }
+            return
+        }
         if CommandLine.arguments.contains("--notification-status") || CommandLine.arguments.contains("--capture-content") || argument("--capture-app-test") != nil {
             do {
                 let data: Data
