@@ -20,7 +20,11 @@ def run(*arguments, check=True):
 
 def configuration():
     if not CONFIG.is_file():
-        raise RuntimeError("고정 서명 설정이 없습니다. 먼저 python3 scripts/setup-local-signing.py 를 실행하세요. 임시 서명으로 대체하지 않습니다.")
+        raise RuntimeError(
+            "개발용 고정 서명 설정이 없습니다. 기존 앱을 업데이트하거나 배포하는 경우 기존 키체인의 인증서·개인 키와 signing.json을 복구하세요. "
+            "새 인증서로 대체하지 않습니다. 처음으로 별도의 개발용 앱을 빌드하는 경우에만 docs/BUILDING.md의 최초 설정을 참고하세요. "
+            "배포본을 설치하는 일반 사용자는 서명 설정이 필요하지 않습니다."
+        )
     config = json.loads(CONFIG.read_text())
     if not re.fullmatch(r"[A-Fa-f0-9]{40}", config["identity"]) or not Path(config["keychain"]).is_file():
         raise RuntimeError("서명 설정이 올바르지 않습니다.")

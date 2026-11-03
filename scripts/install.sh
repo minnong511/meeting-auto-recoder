@@ -14,6 +14,8 @@ Meeting Recorder 0.8.0 설치
   --install-dir 경로  앱을 넣을 절대 경로 (예: "$HOME/Applications")
   --skip-model       음성인식 모델은 첫 녹음 때 준비
   --no-open          설치 후 앱을 열지 않음
+  --with-ollama      Ollama 앱을 추가로 준비 (모델 다운로드 생략)
+  --ollama-model 이름  내려받을 로컬 모델을 직접 선택 (--with-ollama 필요)
   --archive 경로     다운로드 대신 로컬의 공식 ZIP 사용 (같은 SHA-256 검사)
   --help            이 안내 표시
 
@@ -21,7 +23,49 @@ Meeting Recorder 0.8.0 설치
 새 설치는 /Applications에 쓰기 가능하면 그곳에, 아니면 ~/Applications에 합니다.
 앱·MCP 서버 설치와 Whisper 모델 준비를 수행합니다. 실행 승인, 녹음 권한,
 저장 폴더 선택, LLM 앱의 MCP 연결은 사용자가 직접 설정해야 합니다.
+배포본 설치에는 개인 서명 인증서나 개발자 계정이 필요하지 않습니다.
 HELP
+}
+
+prepare_ollama() {
+    local app='' cli='' archive_file downloaded ollama_version=0.40.14
+    local ollama_sha=9047386fb6811f54fc98b12ce4fea42a6ee5ce9e1bbc0c8196499f347054bcb5
+    local ollama_model=$1
+    if [ -d '/Applications/Ollama.app' ]; then app='/Applications/Ollama.app'
+    elif [ -d "$HOME/Applications/Ollama.app" ]; then app="$HOME/Applications/Ollama.app"
+    else
+        printf 'Ollama %s 다운로드 (약 219 MB)\n' "$ollama_version"
+        archive_file="$work_dir/ollama.zip"
+        curl --fail --location --show-error --proto '=https' --proto-redir '=https' --tlsv1.2 \
+            --connect-timeout 20 --retry 3 --output "$archive_file" \
+            "https://github.com/ollama/ollama/releases/download/v${ollama_version}/Ollama-darwin.zip"
+        downloaded=$(shasum -a 256 "$archive_file" | awk '{print $1}')
+        [ "$downloaded" = "$ollama_sha" ] || fail 'Ollama 배포본 SHA-256이 일치하지 않습니다.'
+        mkdir -p "$work_dir/ollama"
+        ditto -x -k "$archive_file" "$work_dir/ollama"
+        codesign --verify --deep --strict "$work_dir/ollama/Ollama.app" || fail 'Ollama 서명을 확인하지 못했습니다.'
+        codesign --verify --strict -R='anchor apple generic and identifier "com.electron.ollama" and certificate leaf[subject.OU] = "3MU9H2V9Y9"' "$work_dir/ollama/Ollama.app" || fail 'Ollama 배포자 서명이 일치하지 않습니다.'
+        if [ -w /Applications ]; then app='/Applications/Ollama.app'
+        else mkdir -p "$HOME/Applications"; app="$HOME/Applications/Ollama.app"; fi
+        [ ! -e "$app" ] || fail "Ollama 설치 위치가 이미 사용 중입니다: $app"
+        mv "$work_dir/ollama/Ollama.app" "$app"
+        printf 'Ollama 설치 완료: %s\n' "$app"
+    fi
+    cli="$app/Contents/Resources/ollama"
+    [ -x "$cli" ] || fail '기존 Ollama 앱에서 실행 파일을 찾지 못했습니다. Ollama 설치를 확인하세요.'
+    if [ -z "$ollama_model" ]; then
+        printf '모델 다운로드 생략. 모델을 준비하려면 --ollama-model 이름을 지정하세요.\n'
+        return
+    fi
+    printf 'Ollama를 시작하고 %s 모델을 준비합니다. 모델 다운로드에 수 GB의 공간과 시간이 필요할 수 있습니다.\n' "$ollama_model"
+    open "$app" || fail 'Ollama를 시작하지 못했습니다. 앱을 직접 열고 다시 시도하세요.'
+    local attempt=0
+    until curl --silent --fail --connect-timeout 1 http://127.0.0.1:11434/api/tags >/dev/null; do
+        attempt=$((attempt + 1))
+        [ "$attempt" -lt 60 ] || fail 'Ollama 서버가 시작되지 않았습니다. 앱을 열어 초기 설정을 마친 뒤 다시 시도하세요.'
+        sleep 1
+    done
+    OLLAMA_HOST=127.0.0.1:11434 "$cli" pull "$ollama_model" || fail '모델 준비에 실패했습니다. 앱 설치는 유지됩니다. 네트워크와 저장 공간을 확인한 뒤 다시 시도하세요.'
 }
 
 cleanup() {
@@ -62,14 +106,14 @@ check_existing_app() {
         [ -n "$old_requirement" ] && [ -n "$new_requirement" ] || fail '앱의 서명 식별 조건을 읽지 못했습니다.'
         codesign --verify --strict "-R=$old_requirement" "$staged_app" &&
             codesign --verify --strict "-R=$new_requirement" "$target_app" ||
-            fail '기존 앱과 새 앱의 서명이 다릅니다. 같은 배포자의 업데이트를 사용하세요. 기존 앱은 변경하지 않았습니다.'
+            fail '기존 앱과 새 앱의 서명이 다릅니다. 앱을 재서명하거나 삭제하지 말고 배포자에게 호환되는 업데이트를 요청하세요. 기존 앱과 녹음은 변경하지 않았습니다.'
     fi
 }
 
 main() {
     local version=0.8.0 release_commit=94233cc3912e23300510dc8242d0333955fab596
     local expected_sha=058a832ba9e7f8d30bb5163dd108fc1a2c75411f36de6511369c077256b3cac1
-    local install_dir='' archive='' skip_model=0 no_open=0 major downloaded_sha
+    local install_dir='' archive='' skip_model=0 no_open=0 with_ollama=0 has_ollama_model=0 ollama_model='' major downloaded_sha
     local archive_name="Meeting-Recorder-${version}-macOS-arm64.zip"
     local base_url="https://raw.githubusercontent.com/minnong511/meeting-auto-recoder/${release_commit}/releases"
     work_dir='' backup_app='' target_app='' lock_dir='' lock_owned=0
@@ -79,16 +123,22 @@ main() {
 
     while [ "$#" -gt 0 ]; do
         case "$1" in
-            --install-dir|--archive)
+            --install-dir|--archive|--ollama-model)
                 [ "$#" -ge 2 ] && [ -n "$2" ] || fail "$1 뒤에 경로를 입력하세요."
-                if [ "$1" = --install-dir ]; then install_dir=$2; else archive=$2; fi
+                case "$1" in --install-dir) install_dir=$2 ;; --archive) archive=$2 ;; --ollama-model) ollama_model=$2; has_ollama_model=1 ;; esac
                 shift 2 ;;
             --skip-model) skip_model=1; shift ;;
             --no-open) no_open=1; shift ;;
+            --with-ollama) with_ollama=1; shift ;;
             --help|-h) usage; return ;;
             *) fail "알 수 없는 옵션: $1 (--help 참고)" ;;
         esac
     done
+    [ "$has_ollama_model" = 0 ] || [ "$with_ollama" = 1 ] || fail '--ollama-model은 --with-ollama와 함께 사용하세요.'
+    if [ "$has_ollama_model" = 1 ]; then
+        case "$ollama_model" in *:cloud|*:cloud/*) fail '클라우드 모델은 지원하지 않습니다.' ;; esac
+        [[ "$ollama_model" =~ ^[a-z0-9][a-z0-9._-]*:[a-z0-9][a-z0-9._-]*$ ]] || fail '모델 이름은 qwen3.5:4b 형식의 기본 라이브러리 모델이어야 합니다.'
+    fi
     [ "$(uname -s)" = Darwin ] || fail 'macOS 전용 설치 프로그램입니다.'
     if [ "$(uname -m)" != arm64 ]; then
         [ "$(sysctl -n hw.optional.arm64 2>/dev/null)" = 1 ] || fail 'Apple Silicon Mac이 필요합니다.'
@@ -156,6 +206,7 @@ main() {
     else
         printf '[3/4] 모델 준비 생략: 첫 녹음 때 내려받습니다.\n'
     fi
+    if [ "$with_ollama" = 1 ]; then prepare_ollama "$ollama_model"; fi
     if [ "$no_open" = 0 ]; then
         printf '[4/4] 앱 열기\n'
         open "$target_app" || fail "앱은 설치되었습니다. Finder에서 직접 여세요: $target_app"

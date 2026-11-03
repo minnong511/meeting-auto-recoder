@@ -14,6 +14,7 @@ final class RecorderModel: ObservableObject {
     @Published var title = ""
     @Published var statusText = "녹음할 준비가 되었습니다"
     @Published var supportText = SpeechSupport.supportLabel
+    @Published private(set) var speechModel: SpeechModel = .largeV3Turbo
     @Published var errorMessage: String?
     @Published var metrics = CaptureMetrics()
     @Published var pendingTranscript = PendingTranscript()
@@ -24,6 +25,8 @@ final class RecorderModel: ObservableObject {
     @Published private(set) var polishedMeetingID: UUID?
     @Published private(set) var isPolishing = false
     @Published private(set) var polishProgress = ""
+    @Published private(set) var localModels: [LocalTranscriptPolisher.Model] = []
+    @Published private(set) var selectedLocalModel = "qwen3.5:4b"
     private var polishTask: Task<Void, Never>?
     @Published private(set) var clipboardMessage = ""
     @Published private(set) var isCopyNoticeVisible = false
@@ -42,6 +45,7 @@ final class RecorderModel: ObservableObject {
     @Published private(set) var selectedTargetID = ""
     @Published private(set) var meetingSuggestion: MeetingAppEvent?
     @Published private(set) var meetingNotificationsEnabled = true
+    @Published private(set) var recordingIslandEnabled = true
     @Published private(set) var notificationStatus = "macOS 알림 확인 전"
     @Published private(set) var activeTarget: RecordingTarget?
     private var current: StoredMeeting?
@@ -68,7 +72,7 @@ final class RecorderModel: ObservableObject {
         guard !selectedTargetID.isEmpty else { return nil }
         return selectedTargetID == RecordingTarget.systemID ? .system : availableApps.first { $0.id == selectedTargetID }?.target
     }
-    var canBegin: Bool { !isBusy && recordingTarget != nil }
+    var canBegin: Bool { !isQuitting && !isBusy && recordingTarget != nil }
     var detectedMeetingApps: [MeetingAppCandidate] { availableApps.filter { $0.kind != nil } }
 
     func canDeleteMeeting(_ stored: StoredMeeting) -> Bool {
@@ -76,6 +80,12 @@ final class RecorderModel: ObservableObject {
     }
 
     init() {
+        if UserDefaults.standard.object(forKey: "recordingIslandEnabled") != nil {
+            recordingIslandEnabled = UserDefaults.standard.bool(forKey: "recordingIslandEnabled")
+        }
+        speechModel = UserDefaults.standard.string(forKey: "speechModel").flatMap(SpeechModel.init(rawValue:)) ?? .largeV3Turbo
+        selectedLocalModel = UserDefaults.standard.string(forKey: "localPolishModel") ?? "qwen3.5:4b"
+        refreshLocalModels()
         if let saved = UserDefaults.standard.string(forKey: "recordingTargetID") {
             selectedTargetID = saved
             automaticallySelectTarget = false
@@ -108,6 +118,12 @@ final class RecorderModel: ObservableObject {
     }
 
     func refreshMeetingApps() { Task { await appMonitor.refresh() } }
+    func refreshLocalModels() { localModels = LocalTranscriptPolisher.installedModels() }
+    func selectLocalModel(_ id: String) {
+        guard !isPolishing, localModels.contains(where: { $0.id == id }) else { return }
+        selectedLocalModel = id
+        UserDefaults.standard.set(id, forKey: "localPolishModel")
+    }
     func refreshNotificationPermission() { Task { await appNotifications.refreshAuthorization() } }
 
     func automaticallyChooseMeetingApp() {
@@ -128,6 +144,11 @@ final class RecorderModel: ObservableObject {
         meetingNotificationsEnabled = enabled
         UserDefaults.standard.set(enabled, forKey: "meetingAppNotifications")
         Task { await appNotifications.configure(enabled: enabled) }
+    }
+
+    func setRecordingIslandEnabled(_ enabled: Bool) {
+        recordingIslandEnabled = enabled
+        UserDefaults.standard.set(enabled, forKey: "recordingIslandEnabled")
     }
 
     func dismissMeetingSuggestion() { meetingSuggestion = nil }
@@ -186,8 +207,17 @@ final class RecorderModel: ObservableObject {
 
     func checkSupport() async {
         supportText = "Whisper 모델 확인 중…"
-        let result = await SpeechSupport.inspect()
-        supportText = result.koreanInstalled ? SpeechSupport.supportLabel : "Whisper large-v3-turbo · 첫 녹음 시 약 627 MB 다운로드"
+        let selected = speechModel
+        let result = await SpeechSupport.inspect(model: selected)
+        guard selected == speechModel else { return }
+        supportText = result.koreanInstalled ? selected.supportLabel : "\(selected.displayName) · 첫 녹음 시 다운로드 (\(selected.downloadDescription))"
+    }
+
+    func selectSpeechModel(_ model: SpeechModel) {
+        guard !isBusy else { return }
+        speechModel = model
+        UserDefaults.standard.set(model.rawValue, forKey: "speechModel")
+        Task { await checkSupport() }
     }
 
     func begin() {
@@ -199,7 +229,7 @@ final class RecorderModel: ObservableObject {
     }
 
     private func begin(limit: Double?) {
-        guard !isBusy else { return }
+        guard !isQuitting, !isBusy else { return }
         guard let target = recordingTarget else { errorMessage = "녹음할 앱을 먼저 선택해 주세요."; return }
         if root == nil { chooseFolder() }
         guard root != nil else { return }
@@ -217,6 +247,7 @@ final class RecorderModel: ObservableObject {
     }
 
     private func startRecording() async {
+        let recordingModel = speechModel
         do {
             statusText = "마이크 권한 확인 중…"
             if microphoneEnabled {
@@ -232,7 +263,7 @@ final class RecorderModel: ObservableObject {
             _ = try CaptureService.contentFilter(content: content, target: target)
             try Task.checkCancellation()
             statusText = "Whisper 모델 준비 중…"
-            try await SpeechLane.prepareAssets { [weak self] message in
+            try await SpeechLane.prepareAssets(model: recordingModel) { [weak self] message in
                 Task { @MainActor [weak self] in
                     guard self?.phase == .preparing else { return }
                     self?.statusText = message
@@ -243,7 +274,7 @@ final class RecorderModel: ObservableObject {
             let stored = try MeetingStore(root: root).create(title: title)
             current = stored
             current?.meeting.recordingTarget = target
-            current?.meeting.transcriptionEngine = SpeechSupport.engineDescription
+            current?.meeting.transcriptionEngine = recordingModel.engineDescription
             selectedID = stored.id
             updateList(stored)
             for source in AudioSource.allCases {
@@ -274,7 +305,7 @@ final class RecorderModel: ObservableObject {
             activeStartedAt = Date()
             phase = .recording
             statusText = "\(target.name) 녹음·실시간 전사 중"
-            supportText = SpeechSupport.supportLabel
+            supportText = recordingModel.supportLabel
             if let limit = recordingLimit {
                 autoStopTask = Task { [weak self] in
                     do { try await Task.sleep(for: .seconds(limit)) } catch { return }
@@ -474,11 +505,16 @@ final class RecorderModel: ObservableObject {
         guard !isBusy, let stored = selected, stored.meeting.status == .completed else { return }
         let paragraphs = TranscriptDocument.playbackParagraphs(stored.meeting)
         guard !paragraphs.isEmpty else { return }
+        refreshLocalModels()
+        guard let selectedModel = localModels.first(where: { $0.id == selectedLocalModel }) else {
+            errorMessage = "선택한 로컬 모델을 찾을 수 없습니다. Ollama에서 내려받고 설정에서 모델을 선택해 주세요."
+            return
+        }
         isPolishing = true
         polishProgress = "로컬 모델 준비 중…"
         polishTask = Task { [weak self] in
             guard let self else { return }
-            let worker = LocalTranscriptPolisher()
+            let worker = LocalTranscriptPolisher(model: selectedModel)
             defer { worker.stop(); self.isPolishing = false; self.polishTask = nil }
             do {
                 var (document, expected) = try PolishedTranscriptStore.read(stored.directory)
@@ -491,7 +527,7 @@ final class RecorderModel: ObservableObject {
                     self.polishProgress = "문장 다듬는 중 \(completed + 1)/\(paragraphs.count)"
                     let text = try await worker.polish(paragraph.text)
                     try Task.checkCancellation()
-                    document.entries[paragraph.id.uuidString] = PolishedEntry(sourceHash: PolishedTranscript.sourceHash(paragraph), text: text)
+                    document.entries[paragraph.id.uuidString] = PolishedEntry(sourceHash: PolishedTranscript.sourceHash(paragraph), text: text, model: selectedModel.id)
                     expected = try PolishedTranscriptStore.save(document, directory: stored.directory, expected: expected)
                     if self.selectedID == stored.id { self.polished = document; self.polishedMeetingID = stored.id }
                 }

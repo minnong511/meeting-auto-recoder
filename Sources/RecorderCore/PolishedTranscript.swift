@@ -4,7 +4,8 @@ import Foundation
 public struct PolishedEntry: Codable, Sendable, Equatable {
     public var sourceHash: String
     public var text: String
-    public init(sourceHash: String, text: String) { self.sourceHash = sourceHash; self.text = text }
+    public var model: String?
+    public init(sourceHash: String, text: String, model: String? = nil) { self.sourceHash = sourceHash; self.text = text; self.model = model }
 }
 
 public struct PolishedTranscript: Codable, Sendable {

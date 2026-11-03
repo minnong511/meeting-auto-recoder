@@ -37,6 +37,7 @@ enum Checks {
             ("중간 결과의 교정은 중복 없이 교체", { try suite.partialReplacement() }),
             ("이전 문장 확정 시 뒤쪽 스트리밍 문장 보존", { try suite.partialFinalization() }),
             ("두 입력의 중간 결과 독립 처리", { try suite.independentPartials() }),
+            ("Whisper 기존 모델 재사용·선택 모델 설치 상태 분리", { try await suite.speechModelCache() }),
             ("Whisper 무음 메모리 제한·발화 확정·입력 공백 보존", { try suite.whisperWindows() }),
             ("Whisper 긴 발언의 경계 문맥과 단어 중복 방지", { try suite.whisperOverlap() }),
             ("Whisper 단어 시간·불확실 전사 보존·무음 출력 제외", { try suite.whisperMapping() }),
@@ -113,10 +114,11 @@ final class RecorderChecks {
         try "원본 전사".write(to: transcript, atomically: true, encoding: .utf8)
         var (document, expected) = try PolishedTranscriptStore.read(directory)
         try expect(document.text(for: paragraph) == nil, "빈 문단에 정리 결과가 있음")
-        document.entries[paragraph.id.uuidString] = PolishedEntry(sourceHash: PolishedTranscript.sourceHash(paragraph), text: "원래 문장입니다.")
+        document.entries[paragraph.id.uuidString] = PolishedEntry(sourceHash: PolishedTranscript.sourceHash(paragraph), text: "원래 문장입니다.", model: "gemma4:e2b")
         expected = try PolishedTranscriptStore.save(document, directory: directory, expected: expected)
         let loaded = try PolishedTranscriptStore.read(directory).0
         try expect(loaded.text(for: paragraph) == "원래 문장입니다.", "저장한 문단을 복원하지 못함")
+        try expect(loaded.entries[paragraph.id.uuidString]?.model == "gemma4:e2b", "문단의 모델 정보를 복원하지 못함")
         let originalText = try String(contentsOf: transcript, encoding: .utf8)
         try expect(originalText == "원본 전사", "원본 전사가 수정됨")
         var changed = paragraph
@@ -130,6 +132,43 @@ final class RecorderChecks {
         let preserved = try String(contentsOf: directory.appendingPathComponent(PolishedTranscriptStore.fileName), encoding: .utf8)
         try expect(preserved == "external", "다른 변경이 보존되지 않음")
     }
+    func speechModelCache() async throws {
+        let cache = FileManager.default.temporaryDirectory.appendingPathComponent("speech-model-check-" + UUID().uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(at: cache, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: cache) }
+        let turbo = cache.appendingPathComponent("openai_whisper-large-v3-v20240930_626MB", isDirectory: true)
+        for name in ["AudioEncoder", "TextDecoder", "MelSpectrogram"] {
+            try FileManager.default.createDirectory(at: turbo.appendingPathComponent(name + ".mlmodelc", isDirectory: true), withIntermediateDirectories: true)
+        }
+        let legacy = cache.appendingPathComponent("ready-model-path.txt")
+        try turbo.path.write(to: legacy, atomically: true, encoding: .utf8)
+        let before = try Data(contentsOf: legacy)
+        let defaultReport = await SpeechSupport.inspect(model: .largeV3Turbo, cacheRoot: cache)
+        let tinyBefore = await SpeechSupport.inspect(model: .tiny, cacheRoot: cache)
+        try expect(defaultReport.koreanInstalled, "기존 기본 모델 마커를 인식하지 못함")
+        try expect(!tinyBefore.koreanInstalled, "기본 모델 마커를 다른 모델에 잘못 적용함")
+        try expect(defaultReport.model != tinyBefore.model, "모델별 진단 식별자가 같음")
+
+        let tiny = cache.appendingPathComponent("openai_whisper-tiny", isDirectory: true)
+        try FileManager.default.createDirectory(at: tiny.appendingPathComponent("AudioEncoder.mlmodelc", isDirectory: true), withIntermediateDirectories: true)
+        let tinyMarker = cache.appendingPathComponent("ready-model-path-tiny.txt")
+        try tiny.path.write(to: tinyMarker, atomically: true, encoding: .utf8)
+        let incomplete = await SpeechSupport.inspect(model: .tiny, cacheRoot: cache)
+        try expect(!incomplete.koreanInstalled, "불완전한 모델을 준비된 상태로 판정함")
+        for name in ["TextDecoder", "MelSpectrogram"] {
+            try FileManager.default.createDirectory(at: tiny.appendingPathComponent(name + ".mlmodelc", isDirectory: true), withIntermediateDirectories: true)
+        }
+        let tinyReady = await SpeechSupport.inspect(model: .tiny, cacheRoot: cache)
+        let baseMissing = await SpeechSupport.inspect(model: .base, cacheRoot: cache)
+        try expect(tinyReady.koreanInstalled, "완료된 선택 모델을 인식하지 못함")
+        try expect(!baseMissing.koreanInstalled, "다른 모델을 이미 준비된 것으로 판정함")
+        try turbo.path.write(to: tinyMarker, atomically: true, encoding: .utf8)
+        let wrongModel = await SpeechSupport.inspect(model: .tiny, cacheRoot: cache)
+        try expect(!wrongModel.koreanInstalled, "다른 모델을 가리키는 마커를 잘못 수용함")
+        let after = try Data(contentsOf: legacy)
+        try expect(after == before, "기존 기본 모델 마커가 변경됨")
+    }
+
     func whisperWindows() throws {
         var window = WhisperAudioWindow()
         let quiet = window.append(Array(repeating: 0, count: 16_000 * 60), at: 0)

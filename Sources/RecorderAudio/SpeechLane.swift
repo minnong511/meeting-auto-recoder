@@ -4,24 +4,62 @@ import Foundation
 import RecorderCore
 import WhisperKit
 
+/// Only multilingual Whisper models are offered: `.en` variants cannot transcribe Korean.
+public enum SpeechModel: String, CaseIterable, Codable, Sendable, Identifiable {
+    case largeV3Turbo = "large-v3-turbo"
+    case small, base, tiny
+    public var id: String { rawValue }
+    public var variant: String {
+        switch self {
+        case .largeV3Turbo: return "openai_whisper-large-v3-v20240930_626MB"
+        case .small: return "openai_whisper-small"
+        case .base: return "openai_whisper-base"
+        case .tiny: return "openai_whisper-tiny"
+        }
+    }
+    public var displayName: String {
+        switch self {
+        case .largeV3Turbo: return "Whisper large-v3-turbo"
+        case .small: return "Whisper small"
+        case .base: return "Whisper base"
+        case .tiny: return "Whisper tiny"
+        }
+    }
+    public var downloadDescription: String {
+        let size: String
+        switch self {
+        case .largeV3Turbo: size = "약 627 MB"
+        case .small: size = "약 487 MB"
+        case .base: size = "약 147 MB"
+        case .tiny: size = "약 77 MB"
+        }
+        return "\(size) + 토크나이저·추가 캐시"
+    }
+    public var supportLabel: String { "\(displayName) · 실시간 결과 저장 · 로컬" }
+    public var engineDescription: String { "WhisperKit · \(variant) · ko · live-only" }
+}
+
 public struct SpeechSupport: Codable, Sendable {
-    public static let supportLabel = "Whisper large-v3-turbo · 실시간 결과 저장 · 로컬"
+    public static let supportLabel = SpeechModel.largeV3Turbo.supportLabel
     public static let engineDescription = "WhisperKit · large-v3-v20240930_626MB · ko · live-only"
     public var engineAvailable: Bool
     public var koreanSupported: Bool
     public var koreanInstalled: Bool
     public var supportedLocales: [String]
     public var engine = "WhisperKit"
-    public var model = WhisperEngine.variant
+    public var model = SpeechModel.largeV3Turbo.variant
     public var cachePath = WhisperEngine.cacheRoot.path
     public var transcriptionMode = "live-only"
     public var postProcessingEnabled = false
 
-    public static func inspect() async -> SpeechSupport {
-        let path = try? String(contentsOf: WhisperEngine.readyMarker, encoding: .utf8)
+    public static func inspect(model: SpeechModel = .largeV3Turbo) async -> SpeechSupport {
+        await inspect(model: model, cacheRoot: WhisperEngine.cacheRoot)
+    }
+    public static func inspect(model: SpeechModel, cacheRoot: URL) async -> SpeechSupport {
+        let path = try? String(contentsOf: WhisperEngine.readyMarker(for: model, cacheRoot: cacheRoot), encoding: .utf8)
         return SpeechSupport(engineAvailable: true, koreanSupported: true,
-            koreanInstalled: path.map { WhisperEngine.validModelFolder(URL(fileURLWithPath: $0)) } ?? false,
-            supportedLocales: ["ko-KR"])
+            koreanInstalled: path.map { WhisperEngine.validModelFolder(URL(fileURLWithPath: $0), model: model) } ?? false,
+            supportedLocales: ["ko-KR"], model: model.variant, cachePath: cacheRoot.path)
     }
 }
 
@@ -29,11 +67,13 @@ public struct SpeechSupport: Codable, Sendable {
 /// suspend inside Core ML; actor isolation alone would allow reentrant decoding.
 private actor WhisperEngine {
     static let shared = WhisperEngine()
-    static let variant = "large-v3-v20240930_626MB"
     static let cacheRoot = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0]
         .appendingPathComponent("MeetingRecorder/Whisper", isDirectory: true)
-    static let readyMarker = cacheRoot.appendingPathComponent("ready-model-path.txt")
+    static func readyMarker(for model: SpeechModel, cacheRoot: URL) -> URL {
+        cacheRoot.appendingPathComponent(model == .largeV3Turbo ? "ready-model-path.txt" : "ready-model-path-\(model.rawValue).txt")
+    }
     private var kit: WhisperKit?
+    private var loadedModel: SpeechModel?
     private var busy = false
     private var waiters: [CheckedContinuation<Void, Never>] = []
     private func acquire() async {
@@ -45,20 +85,26 @@ private actor WhisperEngine {
         else { waiters.removeFirst().resume() }
     }
 
-    func prepare(progress: @escaping @Sendable (String) -> Void) async throws {
+    func prepare(model: SpeechModel, progress: @escaping @Sendable (String) -> Void) async throws {
         await acquire()
         defer { release() }
         try Task.checkCancellation()
-        guard kit == nil else { return }
+        if kit != nil && loadedModel == model { return }
+        if kit != nil {
+            await kit?.unloadModels()
+            kit = nil
+            loadedModel = nil
+        }
         try FileManager.default.createDirectory(at: Self.cacheRoot, withIntermediateDirectories: true)
+        let marker = Self.readyMarker(for: model, cacheRoot: Self.cacheRoot)
         let folder: URL
-        if let path = try? String(contentsOf: Self.readyMarker, encoding: .utf8),
-           Self.validModelFolder(URL(fileURLWithPath: path)) {
+        if let path = try? String(contentsOf: marker, encoding: .utf8),
+           Self.validModelFolder(URL(fileURLWithPath: path), model: model) {
             folder = URL(fileURLWithPath: path)
         } else {
-            progress("Whisper 모델 다운로드 중… 약 627 MB, 처음 한 번만 필요합니다")
-            folder = try await WhisperKit.download(variant: Self.variant, downloadBase: Self.cacheRoot) { value in
-                progress("Whisper 모델 다운로드 중… \(Int(value.fractionCompleted * 100))%")
+            progress("\(model.displayName) 다운로드 중… \(model.downloadDescription), 처음 한 번만 필요합니다")
+            folder = try await WhisperKit.download(variant: model.variant, downloadBase: Self.cacheRoot) { value in
+                progress("\(model.displayName) 다운로드 중… \(Int(value.fractionCompleted * 100))%")
             }
         }
         try Task.checkCancellation()
@@ -69,12 +115,14 @@ private actor WhisperEngine {
             verbose: false, prewarm: true, load: true, download: false)
         let loaded = try await WhisperKit(config)
         try Task.checkCancellation()
+        guard Self.validModelFolder(folder, model: model) else { throw RecorderError.message("선택한 Whisper 모델 파일을 확인하지 못했습니다.") }
+        try folder.path.write(to: marker, atomically: true, encoding: .utf8)
         kit = loaded
-        try folder.path.write(to: Self.readyMarker, atomically: true, encoding: .utf8)
-        progress("Whisper large-v3-turbo 준비됨 · 한국어 로컬 전사")
+        loadedModel = model
+        progress("\(model.displayName) 준비됨 · 한국어 로컬 전사")
     }
-    static func validModelFolder(_ folder: URL) -> Bool {
-        ["AudioEncoder", "TextDecoder", "MelSpectrogram"].allSatisfy {
+    static func validModelFolder(_ folder: URL, model: SpeechModel) -> Bool {
+        folder.lastPathComponent == model.variant && ["AudioEncoder", "TextDecoder", "MelSpectrogram"].allSatisfy {
             FileManager.default.fileExists(atPath: folder.appendingPathComponent($0 + ".mlmodelc").path)
         }
     }
@@ -106,6 +154,7 @@ private actor WhisperEngine {
         defer { release() }
         await kit?.unloadModels()
         kit = nil
+        loadedModel = nil
     }
 }
 
@@ -174,8 +223,8 @@ public final class SpeechLane {
         self.source = source
         self.continuation = continuation
     }
-    public static func prepareAssets(progress: @escaping @Sendable (String) -> Void = { _ in }) async throws {
-        try await WhisperEngine.shared.prepare(progress: progress)
+    public static func prepareAssets(model: SpeechModel = .largeV3Turbo, progress: @escaping @Sendable (String) -> Void = { _ in }) async throws {
+        try await WhisperEngine.shared.prepare(model: model, progress: progress)
     }
     public static func releaseAssets() async { await WhisperEngine.shared.unload() }
 

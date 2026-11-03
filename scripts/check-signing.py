@@ -12,6 +12,9 @@ from unittest.mock import patch
 spec = importlib.util.spec_from_file_location("app_signing", Path(__file__).with_name("app-signing.py"))
 signing = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(signing)
+setup_spec = importlib.util.spec_from_file_location("setup_signing", Path(__file__).with_name("setup-local-signing.py"))
+setup = importlib.util.module_from_spec(setup_spec)
+setup_spec.loader.exec_module(setup)
 
 
 def fixture(directory, version):
@@ -41,6 +44,11 @@ with tempfile.TemporaryDirectory(prefix="recorder-signing-check-") as temporary:
     with patch.object(signing, "CONFIG", directory / "missing.json"):
         expect_failure(signing.configuration)
     print("PASS: missing identity refuses ad-hoc fallback")
+    existing_app = directory / "existing.app"
+    existing_app.mkdir()
+    expect_failure(lambda: setup.refuse_new_identity_for_existing_app([existing_app]))
+    setup.refuse_new_identity_for_existing_app([directory / "absent.app"])
+    print("PASS: existing app prevents accidental creation of a replacement identity")
     old, new = fixture(directory, 1), fixture(directory, 2)
     with patch.dict(os.environ, {"RECORDER_ALLOW_SIGNING_MIGRATION": "0"}):
         signing.sign(old, directory / "absent.app")

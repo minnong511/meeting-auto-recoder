@@ -1,5 +1,6 @@
 import AppKit
 import AVFoundation
+import Combine
 import Foundation
 import RecorderAudio
 import RecorderCore
@@ -9,6 +10,10 @@ import SwiftUI
 enum Launch {
     @MainActor
     static func main() async {
+        if CommandLine.arguments.contains("--notch-helper") {
+            RecordingIslandHelper.run()
+            return
+        }
         if CommandLine.arguments.contains("--notification-status") || CommandLine.arguments.contains("--capture-content") || argument("--capture-app-test") != nil {
             do {
                 let data: Data
@@ -26,10 +31,15 @@ enum Launch {
             return
         }
         let modelsDirectory = argument("--models").map { URL(fileURLWithPath: $0, isDirectory: true) }
+        let speechModelName = argument("--speech-model") ?? SpeechModel.largeV3Turbo.rawValue
+        guard let speechModel = SpeechModel(rawValue: speechModelName) else {
+            fputs("알 수 없는 전사 모델: \(speechModelName)\n", stderr)
+            exit(2)
+        }
         if CommandLine.arguments.contains("--prepare-speech") {
             do {
-                try await SpeechLane.prepareAssets { message in fputs("\(message)\n", stderr) }
-                let report = await SpeechSupport.inspect()
+                try await SpeechLane.prepareAssets(model: speechModel) { message in fputs("\(message)\n", stderr) }
+                let report = await SpeechSupport.inspect(model: speechModel)
                 print(String(decoding: try JSONEncoder().encode(report), as: UTF8.self))
                 await SpeechLane.releaseAssets()
             } catch { fputs("\(error.localizedDescription)\n", stderr); exit(1) }
@@ -46,7 +56,7 @@ enum Launch {
             return
         }
         if CommandLine.arguments.contains("--diagnose") {
-            let report = await SpeechSupport.inspect()
+            let report = await SpeechSupport.inspect(model: speechModel)
             let encoder = JSONEncoder()
             encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
             do { print(String(decoding: try encoder.encode(report), as: UTF8.self)) }
@@ -56,7 +66,7 @@ enum Launch {
         if let index = CommandLine.arguments.firstIndex(of: "--transcribe"), CommandLine.arguments.count > index + 1 {
             do {
                 let url = URL(fileURLWithPath: CommandLine.arguments[index + 1])
-                try await SpeechLane.prepareAssets { message in fputs("\(message)\n", stderr) }
+                try await SpeechLane.prepareAssets(model: speechModel) { message in fputs("\(message)\n", stderr) }
                 let streamEvents = CommandLine.arguments.contains("--stream-events")
                 let realTime = CommandLine.arguments.contains("--realtime")
                 let started = ProcessInfo.processInfo.systemUptime
@@ -93,7 +103,7 @@ enum Launch {
                 encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
                 if CommandLine.arguments.contains("--with-speakers") {
                     var meeting = Meeting(title: url.deletingPathExtension().lastPathComponent)
-                    meeting.transcriptionEngine = SpeechSupport.engineDescription
+                    meeting.transcriptionEngine = speechModel.engineDescription
                     meeting.segments = segments
                     meeting.status = .completed
                     let turns = try await Task.detached(priority: .utility) {
@@ -132,7 +142,7 @@ struct RecorderApp: App {
     var body: some Scene {
         WindowGroup {
             ContentView(model: model).onAppear {
-                delegate.model = model
+                delegate.attach(model)
                 model.startMeetingMonitoring()
                 NSApp.setActivationPolicy(.regular)
                 NSApp.activate(ignoringOtherApps: true)
@@ -141,7 +151,8 @@ struct RecorderApp: App {
         .commands {
             CommandGroup(replacing: .newItem) {}
         }
-        MenuBarExtra("Meeting Recorder", systemImage: model.phase == .recording ? "record.circle.fill" : "waveform") {
+        MenuBarExtra(model.phase == .recording ? "녹음 중" : (model.phase == .stopping ? "저장 중" : "Meeting Recorder"),
+                     systemImage: model.phase == .recording ? "record.circle.fill" : (model.phase == .stopping ? "square.circle.fill" : "waveform")) {
             Text(model.statusText)
             if model.phase == .recording {
                 Button("녹음 종료") { Task { await model.stop() } }
@@ -162,7 +173,20 @@ struct RecorderApp: App {
 @MainActor
 final class RecorderAppDelegate: NSObject, NSApplicationDelegate {
     weak var model: RecorderModel?
+    private var island: RecordingIslandController?
+    private var islandSetting: AnyCancellable?
+
+    func attach(_ model: RecorderModel) {
+        guard self.model !== model || island == nil else { return }
+        self.model = model
+        let controller = RecordingIslandController(model: model, enabled: model.recordingIslandEnabled)
+        island = controller
+        islandSetting = model.$recordingIslandEnabled.sink { [weak controller] enabled in
+            controller?.setEnabled(enabled)
+        }
+    }
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        island?.prepareForTermination()
         guard let model, model.isBusy else { return .terminateNow }
         Task {
             await model.finishBeforeQuitting()

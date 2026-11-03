@@ -10,6 +10,7 @@ import tempfile
 
 LABEL = "Meeting Recorder Local Development"
 CONFIG = Path.home() / "Library/Application Support/Meeting Recorder/signing.json"
+ROOT = Path(__file__).resolve().parent.parent
 
 
 def run(*args, check=True):
@@ -17,6 +18,15 @@ def run(*args, check=True):
     if check and result.returncode:
         raise RuntimeError(result.stderr.strip() or "명령을 실행하지 못했습니다.")
     return result
+
+
+def refuse_new_identity_for_existing_app(paths):
+    for app in paths:
+        if app.exists() or app.is_symlink():
+            raise RuntimeError(
+                f"기존 앱이 있어 새 인증서 생성을 중단했습니다: {app}. "
+                "기존 서명 키와 signing.json을 복구하거나 의도적인 서명 전환을 별도로 계획하세요."
+            )
 
 
 def main():
@@ -36,6 +46,10 @@ def main():
         else:
             if CONFIG.exists():
                 raise RuntimeError("저장된 인증서가 키체인에 없습니다. 새 인증서를 생성하면 권한 연결이 바뀌므로 중단합니다.")
+            refuse_new_identity_for_existing_app([
+                ROOT / "dist/Meeting Recorder.app", ROOT / "dist/package/Meeting Recorder.app",
+                Path("/Applications/Meeting Recorder.app"), Path.home() / "Applications/Meeting Recorder.app",
+            ])
             key = directory / "private-key.pem"
             extensions = directory / "openssl.cnf"
             extensions.write_text("""[req]

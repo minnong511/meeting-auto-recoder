@@ -6,7 +6,7 @@ enum PolishError: LocalizedError {
     var errorDescription: String? {
         switch self {
         case .missingServer: return "Ollama 앱을 찾을 수 없습니다. Ollama를 설치한 뒤 다시 시도해 주세요."
-        case .missingModel: return "Qwen3.5 4B 모델을 찾을 수 없습니다. 터미널에서 ‘ollama pull qwen3.5:4b’를 실행한 뒤 다시 시도해 주세요."
+        case .missingModel: return "선택한 로컬 모델을 찾을 수 없습니다. Ollama에서 모델을 내려받고 목록을 새로고침해 주세요."
         case .port: return "로컬 문장 다듬기 연결을 만들지 못했습니다."
         case .startup: return "로컬 모델을 시작하지 못했습니다. 사용 가능한 메모리와 Ollama 설치를 확인해 주세요."
         case .response: return "문장 다듬기 결과를 읽지 못했습니다. 원문은 그대로 보존되었습니다."
@@ -17,6 +17,12 @@ enum PolishError: LocalizedError {
 
 /// A short-lived, authenticated, loopback-only CPU server. It never receives audio.
 final class LocalTranscriptPolisher {
+    struct Model: Identifiable, Equatable {
+        let id: String
+        let path: String
+    }
+    private let model: Model
+    init(model: Model) { self.model = model }
     private var process: Process?
     private var base: URL?
     private let key = UUID().uuidString + UUID().uuidString
@@ -38,29 +44,40 @@ final class LocalTranscriptPolisher {
         return UInt16(bigEndian: addr.sin_port)
     }
 
-    private func modelPath() throws -> String {
+    static func installedModels() -> [Model] {
         let home = FileManager.default.homeDirectoryForCurrentUser
         let root = ProcessInfo.processInfo.environment["OLLAMA_MODELS"].map { URL(fileURLWithPath: $0, isDirectory: true) }
             ?? home.appendingPathComponent(".ollama/models", isDirectory: true)
-        let manifest = root.appendingPathComponent("manifests/registry.ollama.ai/library/qwen3.5/4b")
-        guard let data = try? Data(contentsOf: manifest),
-              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-              let layers = json["layers"] as? [[String: Any]],
-              let model = layers.first(where: { ($0["mediaType"] as? String) == "application/vnd.ollama.image.model" }),
-              let digest = model["digest"] as? String, digest.range(of: "^sha256:[a-f0-9]{64}$", options: .regularExpression) != nil else { throw PolishError.missingModel }
-        let file = root.appendingPathComponent("blobs/" + digest.replacingOccurrences(of: ":", with: "-"))
-        guard FileManager.default.isReadableFile(atPath: file.path) else { throw PolishError.missingModel }
-        return file.path
+        let manifests = root.appendingPathComponent("manifests/registry.ollama.ai/library", isDirectory: true)
+        guard let names = try? FileManager.default.contentsOfDirectory(atPath: manifests.path) else { return [] }
+        var result: [Model] = []
+        for name in names where !name.hasPrefix(".") {
+          let directory = manifests.appendingPathComponent(name, isDirectory: true)
+          for tag in (try? FileManager.default.contentsOfDirectory(atPath: directory.path)) ?? [] where !tag.hasPrefix(".") {
+            let manifest = directory.appendingPathComponent(tag)
+            guard let data = try? Data(contentsOf: manifest),
+                  let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                  let layers = json["layers"] as? [[String: Any]],
+                  let layer = layers.first(where: { ($0["mediaType"] as? String) == "application/vnd.ollama.image.model" }),
+                  let digest = layer["digest"] as? String, digest.range(of: "^sha256:[a-f0-9]{64}$", options: .regularExpression) != nil else { continue }
+            let file = root.appendingPathComponent("blobs/" + digest.replacingOccurrences(of: ":", with: "-"))
+            guard FileManager.default.isReadableFile(atPath: file.path) else { continue }
+            result.append(Model(id: "\(name):\(tag)", path: file.path))
+          }
+        }
+        return result.sorted { $0.id.localizedStandardCompare($1.id) == .orderedAscending }
     }
 
     func start() async throws {
-        let executable = "/Applications/Ollama.app/Contents/Resources/llama-server"
-        guard FileManager.default.isExecutableFile(atPath: executable) else { throw PolishError.missingServer }
-        let path = try modelPath()
+        let executable = ["/Applications/Ollama.app/Contents/Resources/llama-server",
+                          FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Applications/Ollama.app/Contents/Resources/llama-server").path]
+            .first { FileManager.default.isExecutableFile(atPath: $0) }
+        guard let executable else { throw PolishError.missingServer }
+        guard Self.installedModels().contains(model) else { throw PolishError.missingModel }
         let port = try freePort()
         let server = Process()
         server.executableURL = URL(fileURLWithPath: executable)
-        server.arguments = ["--model", path, "--host", "127.0.0.1", "--port", String(port), "--api-key", key,
+        server.arguments = ["--model", model.path, "--host", "127.0.0.1", "--port", String(port), "--api-key", key,
                             "--ctx-size", "4096", "--parallel", "1", "--device", "none", "--n-gpu-layers", "0",
                             "--fit", "off", "--no-op-offload", "--no-mmproj", "--jinja", "--threads", "4", "--no-webui"]
         server.standardOutput = FileHandle.nullDevice
@@ -89,10 +106,11 @@ final class LocalTranscriptPolisher {
         요약하거나 새로운 사실을 추가하지 마세요. 숫자, 부정, 고유명사, 기술용어, 불확실한 표현은 추측하지 말고 그대로 두세요.
         설명이나 제목 없이 교정된 전사문만 출력하세요.
         """
-        let body: [String: Any] = ["model": "qwen3.5:4b", "stream": false, "temperature": 0,
-                                  "max_tokens": 1024, "chat_template_kwargs": ["enable_thinking": false],
+        var body: [String: Any] = ["model": model.id, "stream": false, "temperature": 0,
+                                  "max_tokens": 1024, "stop": ["<|im_end|>", "<end_of_turn>"],
                                   "messages": [["role": "system", "content": instruction],
                                                ["role": "user", "content": "다음은 편집 대상 전사문입니다.\n<transcript>\n\(text)\n</transcript>"]]]
+        if model.id.hasPrefix("qwen") { body["chat_template_kwargs"] = ["enable_thinking": false] }
         var request = URLRequest(url: base.appendingPathComponent("v1/chat/completions"))
         request.httpMethod = "POST"
         request.timeoutInterval = 180

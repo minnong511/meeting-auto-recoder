@@ -603,6 +603,13 @@ struct ContentView: View {
                     Text("원문을 보존하며 이 Mac에서 문장을 다듬습니다.").font(.system(size: 13, weight: .semibold))
                     Text("AI가 의미를 바꿀 수 있습니다. 원문과 녹음을 확인해 주세요.")
                         .font(.system(size: 11)).foregroundStyle(.secondary)
+                    Text("선택 모델: \(model.selectedLocalModel) · 완료된 문단은 다시 처리하지 않습니다.")
+                        .font(.caption).foregroundStyle(.secondary)
+                    if !model.polished.entries.isEmpty {
+                        let models = Set(model.polished.entries.values.map { $0.model ?? model.polished.model })
+                        Text("저장된 결과 모델: \(models.sorted().joined(separator: ", "))")
+                            .font(.caption).foregroundStyle(.secondary)
+                    }
                     if !model.polishProgress.isEmpty { Text(model.polishProgress).font(.caption).foregroundStyle(.secondary) }
                 }
                 Spacer()
@@ -763,10 +770,38 @@ private struct RecorderSettingsView: View {
             Divider()
             Form {
                 Section {
-                    LabeledContent("음성 인식", value: "Whisper · 실시간")
+                    Picker("음성 인식 모델", selection: Binding(get: { model.speechModel }, set: model.selectSpeechModel)) {
+                        ForEach(SpeechModel.allCases) { speechModel in
+                            Text(speechModel.displayName).tag(speechModel)
+                        }
+                    }.disabled(model.isBusy)
+                    Text(model.speechModel.downloadDescription + " · 선택한 모델은 첫 녹음 시 준비합니다.")
+                        .font(.caption).foregroundStyle(.secondary)
+                    Text("작은 모델은 빠르고 공간을 적게 쓸 수 있지만 한국어 인식 정확도가 낮아질 수 있습니다.")
+                        .font(.caption).foregroundStyle(.secondary)
                     Text("녹음 중 확정된 문장을 그대로 저장합니다. 종료할 때는 마지막 미확정 문장만 마무리합니다.")
                         .font(.caption).foregroundStyle(.secondary)
                 } header: { Label("전사", systemImage: "text.bubble") }
+                Section {
+                    if model.localModels.isEmpty {
+                        Text("사용 가능한 로컬 모델이 없습니다. Ollama에서 모델을 내려받으세요.")
+                    } else {
+                        Picker("문장 다듬기 모델", selection: Binding(get: { model.selectedLocalModel }, set: model.selectLocalModel)) {
+                            if !model.localModels.contains(where: { $0.id == model.selectedLocalModel }) {
+                                Text("\(model.selectedLocalModel) · 찾을 수 없음").tag(model.selectedLocalModel)
+                            }
+                            ForEach(model.localModels) { item in Text(item.id).tag(item.id) }
+                        }.disabled(model.isPolishing)
+                    }
+                    Button("모델 목록 새로고침", action: model.refreshLocalModels)
+                    Text("다운로드된 Ollama 기본 라이브러리 모델을 이 Mac의 CPU에서 처리합니다. 모델에 따라 품질과 호환성이 다를 수 있습니다.")
+                        .font(.caption).foregroundStyle(.secondary)
+                } header: { Label("로컬 문장 다듬기", systemImage: "text.badge.checkmark") }
+                Section {
+                    Toggle("화면 상단에 녹음 상태 표시", isOn: Binding(get: { model.recordingIslandEnabled }, set: model.setRecordingIslandEnabled))
+                    Text("녹음 중에는 화면 상단에서 상태를 확인하고 종료할 수 있습니다.")
+                        .font(.caption).foregroundStyle(.secondary)
+                } header: { Label("녹음 상태", systemImage: "record.circle") }
                 Section {
                     Toggle("회의 앱을 감지하면 macOS 알림", isOn: Binding(get: { model.meetingNotificationsEnabled }, set: model.setMeetingNotifications))
                     Text(model.notificationStatus).font(.caption).foregroundStyle(.secondary)
@@ -839,6 +874,7 @@ private struct RecorderSettingsView: View {
             .onAppear {
                 model.refreshMCPConnections()
                 Task { await model.checkMCP() }
+                Task { await model.checkSupport() }
             }
     }
 }

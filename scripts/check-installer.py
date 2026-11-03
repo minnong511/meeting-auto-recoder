@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Exercise the real binary installer in temporary folders, without opening apps."""
 import argparse
+import os
 from pathlib import Path
 import plistlib
 import re
@@ -55,6 +56,18 @@ def main():
         assert binary.is_file() and mcp.is_file()
         old_inode = mcp.stat().st_ino
         passed("signed ZIP installs app and MCP into an isolated folder")
+
+        clean_home = workspace / "new-user-home"
+        clean_home.mkdir()
+        clean_destination = workspace / "new-user-apps"
+        result = subprocess.run(
+            ["/bin/bash", str(installer), "--install-dir", str(clean_destination), "--skip-model", "--no-open", "--archive", str(archive)],
+            text=True, capture_output=True, timeout=90, env={**os.environ, "HOME": str(clean_home)},
+        )
+        assert result.returncode == 0, result.stdout + result.stderr
+        assert (clean_destination / "Meeting Recorder.app/Contents/MacOS/MeetingRecorder").is_file()
+        assert not (clean_home / "Library/Application Support/Meeting Recorder/signing.json").exists()
+        passed("release installs for a user with no signing configuration")
 
         result = install()
         assert result.returncode == 0, result.stdout + result.stderr
@@ -118,6 +131,8 @@ def main():
         assert run("/bin/bash", str(installer), "--install-dir", check=False).returncode != 0
         assert run("/bin/bash", str(installer), "--unknown", check=False).returncode != 0
         assert run("/bin/bash", str(installer), "--install-dir", "relative", check=False).returncode != 0
+        assert run("/bin/bash", str(installer), "--ollama-model", "qwen3.5:4b", check=False).returncode != 0
+        assert run("/bin/bash", str(installer), "--with-ollama", "--ollama-model", "qwen3:cloud", check=False).returncode != 0
         passed("invalid arguments are rejected")
 
         if options.download:
