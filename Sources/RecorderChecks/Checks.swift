@@ -46,6 +46,9 @@ enum Checks {
             ("무음·기호 필터와 실제 짧은 발언 보존", { try suite.transcriptCleanup() }),
             ("발언 시간순 대화록·교대 화자·고유 구간", { try suite.speakerDocument() }),
             ("문단 재생 시각·화자 교대·원문 보존", { try suite.playbackParagraphs() }),
+            ("문장 정리 원문 보존·이어하기·외부 수정 보호", { try suite.polishedTranscriptPersistence() }),
+            ("날짜별 회의 목록 경계", { try suite.meetingDateGroups() }),
+            ("요약 Markdown 구조와 표 보존", { try suite.summaryMarkdownParsing() }),
             ("연결 앱 묶음·세션 수·버전·정렬", { try suite.connectionPresentation() }),
             ("기존 기록 이전과 음성·요약 보존", { try suite.legacyMigration() }),
             ("사용자가 편집한 Markdown 보존", { try suite.editedMarkdownPreserved() }),
@@ -77,6 +80,56 @@ enum Checks {
 }
 
 final class RecorderChecks {
+    func meetingDateGroups() throws {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = TimeZone(secondsFromGMT: 9 * 3600)!
+        let now = calendar.date(from: DateComponents(year: 2026, month: 11, day: 3, hour: 15))!
+        func date(_ delta: Int) -> Date { calendar.date(byAdding: .day, value: delta, to: now)! }
+        try expect(MeetingDateGroup.group(for: date(0), now: now, calendar: calendar) == .today, "오늘 분류 실패")
+        try expect(MeetingDateGroup.group(for: date(-1), now: now, calendar: calendar) == .yesterday, "어제 분류 실패")
+        try expect(MeetingDateGroup.group(for: date(-7), now: now, calendar: calendar) == .previousSevenDays, "7일 경계 실패")
+        try expect(MeetingDateGroup.group(for: date(-8), now: now, calendar: calendar) == .previousThirtyDays, "8일 경계 실패")
+        try expect(MeetingDateGroup.group(for: date(-31), now: now, calendar: calendar) == .older, "이전 회의 분류 실패")
+        try expect(MeetingDateGroup.group(for: date(1), now: now, calendar: calendar) == .future, "미래 날짜 분류 실패")
+    }
+
+    func summaryMarkdownParsing() throws {
+        let input = "# 회의 요약\n\n핵심 **내용**\n\n- 할 일\n\n| 담당자 | 작업 |\n| --- | --- |\n| 미정 | 확인 |\n\n```\n그대로\n```"
+        let blocks = SummaryMarkdown.parse(input)
+        try expect(blocks == [.heading(level: 1, text: "회의 요약"), .paragraph("핵심 **내용**"),
+                              .list(marker: "•", text: "할 일"), .table([["담당자", "작업"], ["미정", "확인"]]),
+                              .code("그대로")], "요약의 제목·본문·목록·표·코드 구조가 바뀜")
+        let escaped = SummaryMarkdown.parse("| 내용 | 설명 |\n| --- | --- |\n| a \\| b | c |")
+        try expect(escaped.contains(.paragraph("| a \\| b | c |")), "표의 이스케이프 구분자를 잃음")
+    }
+    func polishedTranscriptPersistence() throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        var meeting = Meeting(title: "시험")
+        meeting.add(TranscriptSegment(source: .system, start: 2, end: 5, text: "원래 문장 입니다"))
+        let paragraph = TranscriptDocument.playbackParagraphs(meeting)[0]
+        let transcript = directory.appendingPathComponent("transcript.md")
+        try "원본 전사".write(to: transcript, atomically: true, encoding: .utf8)
+        var (document, expected) = try PolishedTranscriptStore.read(directory)
+        try expect(document.text(for: paragraph) == nil, "빈 문단에 정리 결과가 있음")
+        document.entries[paragraph.id.uuidString] = PolishedEntry(sourceHash: PolishedTranscript.sourceHash(paragraph), text: "원래 문장입니다.")
+        expected = try PolishedTranscriptStore.save(document, directory: directory, expected: expected)
+        let loaded = try PolishedTranscriptStore.read(directory).0
+        try expect(loaded.text(for: paragraph) == "원래 문장입니다.", "저장한 문단을 복원하지 못함")
+        let originalText = try String(contentsOf: transcript, encoding: .utf8)
+        try expect(originalText == "원본 전사", "원본 전사가 수정됨")
+        var changed = paragraph
+        changed.text = "변경된 원문"
+        try expect(loaded.text(for: changed) == nil, "바뀐 원문에 이전 정리 결과를 붙임")
+        try Data("external".utf8).write(to: directory.appendingPathComponent(PolishedTranscriptStore.fileName))
+        var rejected = false
+        do { _ = try PolishedTranscriptStore.save(document, directory: directory, expected: expected) }
+        catch { rejected = true }
+        try expect(rejected, "외부에서 수정한 정리 결과를 덮어씀")
+        let preserved = try String(contentsOf: directory.appendingPathComponent(PolishedTranscriptStore.fileName), encoding: .utf8)
+        try expect(preserved == "external", "다른 변경이 보존되지 않음")
+    }
     func whisperWindows() throws {
         var window = WhisperAudioWindow()
         let quiet = window.append(Array(repeating: 0, count: 16_000 * 60), at: 0)

@@ -20,6 +20,11 @@ final class RecorderModel: ObservableObject {
     @Published var latestConfirmed: [AudioSource: TranscriptSegment] = [:]
     @Published var transcriptRevision = 0
     @Published private(set) var summaryRevision = 0
+    @Published private(set) var polished = PolishedTranscript()
+    @Published private(set) var polishedMeetingID: UUID?
+    @Published private(set) var isPolishing = false
+    @Published private(set) var polishProgress = ""
+    private var polishTask: Task<Void, Never>?
     @Published private(set) var clipboardMessage = ""
     @Published private(set) var isCopyNoticeVisible = false
     @Published private(set) var mcpClients: [MCPClientConnection] = []
@@ -56,7 +61,7 @@ final class RecorderModel: ObservableObject {
     private var automaticallySelectTarget = true
     private var handledTargetExit = false
 
-    var isBusy: Bool { phase != .idle }
+    var isBusy: Bool { phase != .idle || isPolishing }
     var selected: StoredMeeting? { meetings.first { $0.id == selectedID } }
     var selectedIsActive: Bool { current?.id == selectedID && isBusy }
     var recordingTarget: RecordingTarget? {
@@ -438,12 +443,69 @@ final class RecorderModel: ObservableObject {
     func finishBeforeQuitting() async {
         isQuitting = true
         speakerTask?.cancel()
+        polishTask?.cancel()
+        await polishTask?.value
         await stop()
         // A stop initiated from the window may already be exporting.
         while isBusy { try? await Task.sleep(for: .milliseconds(100)) }
     }
 
     func cancelSpeakerSeparation() { speakerTask?.cancel() }
+
+    func refreshPolished() {
+        guard let stored = selected else { polished = PolishedTranscript(); polishedMeetingID = nil; return }
+        do {
+            polished = try PolishedTranscriptStore.read(stored.directory).0
+            polishedMeetingID = stored.id
+        } catch {
+            polished = PolishedTranscript()
+            polishedMeetingID = nil
+        }
+    }
+
+    func polishedText(for paragraph: TranscriptPlaybackParagraph, in meeting: StoredMeeting) -> String? {
+        guard polishedMeetingID == meeting.id else { return nil }
+        return polished.text(for: paragraph)
+    }
+
+    func cancelPolishing() { polishTask?.cancel() }
+
+    func startPolishing() {
+        guard !isBusy, let stored = selected, stored.meeting.status == .completed else { return }
+        let paragraphs = TranscriptDocument.playbackParagraphs(stored.meeting)
+        guard !paragraphs.isEmpty else { return }
+        isPolishing = true
+        polishProgress = "로컬 모델 준비 중…"
+        polishTask = Task { [weak self] in
+            guard let self else { return }
+            let worker = LocalTranscriptPolisher()
+            defer { worker.stop(); self.isPolishing = false; self.polishTask = nil }
+            do {
+                var (document, expected) = try PolishedTranscriptStore.read(stored.directory)
+                let pending = paragraphs.filter { document.text(for: $0) == nil }
+                guard !pending.isEmpty else { self.polishProgress = "이미 문장 정리가 완료되었습니다."; return }
+                try await worker.start()
+                for paragraph in pending {
+                    try Task.checkCancellation()
+                    let completed = paragraphs.count - pending.count + pending.firstIndex(where: { $0.id == paragraph.id })!
+                    self.polishProgress = "문장 다듬는 중 \(completed + 1)/\(paragraphs.count)"
+                    let text = try await worker.polish(paragraph.text)
+                    try Task.checkCancellation()
+                    document.entries[paragraph.id.uuidString] = PolishedEntry(sourceHash: PolishedTranscript.sourceHash(paragraph), text: text)
+                    expected = try PolishedTranscriptStore.save(document, directory: stored.directory, expected: expected)
+                    if self.selectedID == stored.id { self.polished = document; self.polishedMeetingID = stored.id }
+                }
+                self.polishProgress = "문장 정리가 완료되었습니다. 원문과 비교해 확인해 주세요."
+            } catch {
+                if Task.isCancelled || error is CancellationError {
+                    self.polishProgress = "중단했습니다. 완료된 문단은 저장되어 있습니다."
+                } else {
+                    self.polishProgress = "문장 정리를 완료하지 못했습니다. 완료된 문단과 원문은 보존됩니다."
+                    self.errorMessage = error.localizedDescription
+                }
+            }
+        }
+    }
 
     private func separateSpeakers(_ stored: StoredMeeting) async throws -> Meeting {
         if isQuitting { throw CancellationError() }

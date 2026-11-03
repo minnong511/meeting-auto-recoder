@@ -28,6 +28,8 @@ cp -f .build/checkouts/FluidAudio/LICENSE "$RECORDER_APP/Contents/Resources/Flui
 cp -f .build/checkouts/FluidAudio/ThirdPartyLicenses/fastcluster-LICENSE.md "$RECORDER_APP/Contents/Resources/fastcluster-LICENSE.txt"
 cp -f .build/checkouts/FluidAudio/ThirdPartyLicenses/vbx-LICENSE.md "$RECORDER_APP/Contents/Resources/VBx-LICENSE.txt"
 cp Resources/ThirdPartyNotices.txt "$RECORDER_APP/Contents/Resources/ThirdPartyNotices.txt"
+cp Resources/PretendardVariable.ttf "$RECORDER_APP/Contents/Resources/PretendardVariable.ttf"
+cp Resources/Pretendard-LICENSE.txt "$RECORDER_APP/Contents/Resources/Pretendard-LICENSE.txt"
 cp -f .build/checkouts/argmax-oss-swift/LICENSE "$RECORDER_APP/Contents/Resources/WhisperKit-LICENSE.txt"
 cp -f .build/checkouts/argmax-oss-swift/NOTICES "$RECORDER_APP/Contents/Resources/WhisperKit-NOTICES.txt"
 cp -f Resources/Whisper-LICENSE.txt "$RECORDER_APP/Contents/Resources/Whisper-LICENSE.txt"

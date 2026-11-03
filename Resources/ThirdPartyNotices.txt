@@ -24,3 +24,7 @@ Argmax. Model assets and tokenizer files are downloaded separately and cached.
 https://huggingface.co/argmaxinc/whisperkit-coreml/tree/main/openai_whisper-large-v3-v20240930_626MB
 https://github.com/openai/whisper (MIT License)
 No audio is sent to a speech recognition API.
+
+Pretendard Variable by Kil Hyung-jin, version 1.3.9, is distributed under
+the SIL Open Font License 1.1. The full license and notices are included in
+Pretendard-LICENSE.txt. Source: https://github.com/orioncactus/pretendard

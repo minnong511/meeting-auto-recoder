@@ -106,6 +106,7 @@ enum Launch {
             } catch { fputs("\(error.localizedDescription)\n", stderr); exit(1) }
             return
         }
+        RecorderTheme.registerFonts()
         RecorderApp.main()
     }
 

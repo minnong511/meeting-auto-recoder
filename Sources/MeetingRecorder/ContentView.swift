@@ -3,13 +3,6 @@ import RecorderAudio
 import RecorderCore
 import SwiftUI
 
-private enum RecorderTheme {
-    static let accent = Color.indigo
-    static let canvas = Color(nsColor: .windowBackgroundColor)
-    static let surface = Color(nsColor: .controlBackgroundColor)
-    static let border = Color.primary.opacity(0.08)
-}
-
 private struct CopyToastModifier: ViewModifier {
     @ObservedObject var model: RecorderModel
 
@@ -42,6 +35,7 @@ struct ContentView: View {
     @State private var expandsRecordingControls = false
     @State private var followLive = true
     @State private var pendingDeletion: StoredMeeting?
+    @State private var confirmsStop = false
 
     private var filteredMeetings: [StoredMeeting] {
         let query = search.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -51,7 +45,7 @@ struct ContentView: View {
     }
 
     private var showsRecordingControls: Bool {
-        model.isBusy || model.selected == nil || expandsRecordingControls
+        model.phase != .idle || model.selected == nil || expandsRecordingControls
     }
 
     var body: some View {
@@ -61,7 +55,7 @@ struct ContentView: View {
             }.navigationSplitViewColumnWidth(min: 230, ideal: 260, max: 320)
         } detail: {
             GeometryReader { geometry in
-            VStack(spacing: 16) {
+            VStack(spacing: 0) {
                 if showsRecordingControls, let suggestion = model.meetingSuggestion { meetingAppBanner(suggestion) }
                 if showsRecordingControls { recordingControls }
                 else { collapsedRecordingControls }
@@ -69,14 +63,14 @@ struct ContentView: View {
                 else { emptyLibrary }
                 workspaceFooter
             }
-            .padding(.horizontal, 22).padding(.top, 20).padding(.bottom, 12)
+            .padding(.horizontal, 28).padding(.top, 18).padding(.bottom, 10)
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .background(RecorderTheme.canvas)
             .frame(width: geometry.size.width, height: geometry.size.height, alignment: .top)
             }
         }
         .tint(RecorderTheme.accent)
-        .frame(minWidth: 940, minHeight: 680)
+        .frame(minWidth: 820, minHeight: 620)
         .modifier(CopyToastModifier(model: model))
         .sheet(isPresented: $showsSettings) { RecorderSettingsView(model: model) }
         .confirmationDialog("회의를 삭제할까요?",
@@ -87,6 +81,10 @@ struct ContentView: View {
         } message: { stored in
             Text("‘\(stored.meeting.title)’의 녹음, 대화록, 요약과 관련 파일을 모두 휴지통으로 이동합니다. Finder의 휴지통에서 복구할 수 있습니다.")
         }
+        .confirmationDialog("녹음을 종료할까요?", isPresented: $confirmsStop, titleVisibility: .visible) {
+            Button("녹음 종료") { Task { await model.stop() } }
+            Button("계속 녹음", role: .cancel) {}
+        } message: { Text("녹음을 마치고 전사와 음성 파일을 저장합니다.") }
         .alert("확인이 필요합니다", isPresented: Binding(get: { model.errorMessage != nil }, set: { if !$0 { model.errorMessage = nil } })) {
             Button("확인") { model.errorMessage = nil }
         } message: { Text(model.errorMessage ?? "") }
@@ -95,6 +93,7 @@ struct ContentView: View {
             expandsRecordingControls = false
             if let stored = model.selected, stored.meeting.audioFile != nil { playback.prepare(stored) }
             model.refreshSummary()
+            model.refreshPolished()
         }
         .onChange(of: model.activeStartedAt) { _, date in
             if date != nil { tab = "transcript"; followLive = true; search = "" }
@@ -114,6 +113,7 @@ struct ContentView: View {
             model.refreshNotificationPermission()
             model.refreshSummary()
         }
+        .onAppear { model.refreshPolished() }
         .onReceive(Timer.publish(every: 2, on: .main, in: .common).autoconnect()) { _ in
             model.refreshSummary()
             if showsSettings { model.refreshMCPConnections() }
@@ -122,15 +122,13 @@ struct ContentView: View {
 
     private var sidebar: some View {
         VStack(alignment: .leading, spacing: 0) {
-            HStack(spacing: 10) {
-                Image(systemName: "waveform").font(.system(size: 19, weight: .semibold))
-                    .foregroundStyle(RecorderTheme.accent).frame(width: 36, height: 36)
-                    .background(RecorderTheme.accent.opacity(0.12), in: RoundedRectangle(cornerRadius: 11))
+            HStack(spacing: 9) {
+                Image(systemName: "waveform").font(.system(size: 16, weight: .semibold))
+                    .foregroundStyle(RecorderTheme.accent).frame(width: 28, height: 28)
                 VStack(alignment: .leading, spacing: 3) {
-                    Text("Meeting Recorder").font(.system(size: 15, weight: .semibold))
-                    Text("대화가 기록이 되는 곳").font(.system(size: 11)).foregroundStyle(.secondary)
+                    Text("Meeting Recorder").font(RecorderTheme.heading(15))
                 }
-            }.padding(.horizontal, 20).padding(.top, 20).padding(.bottom, 24)
+            }.padding(.horizontal, 16).padding(.top, 18).padding(.bottom, 20)
             Button {
                 model.selectedID = nil
                 model.title = ""
@@ -138,13 +136,14 @@ struct ContentView: View {
                 tab = "transcript"
                 followLive = true
             } label: {
-                Label("새 회의", systemImage: "plus").frame(maxWidth: .infinity)
+                Label("새 녹음", systemImage: "square.and.pencil").frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.horizontal, 6).padding(.vertical, 5)
             }
-            .buttonStyle(.borderedProminent)
+            .buttonStyle(.bordered)
             .controlSize(.large)
             .keyboardShortcut("n", modifiers: .command)
             .disabled(model.isBusy)
-            .padding(.horizontal, 20).padding(.bottom, 16)
+            .padding(.horizontal, 16).padding(.bottom, 16)
             HStack(spacing: 8) {
                 Image(systemName: "magnifyingglass").foregroundStyle(.secondary)
                 TextField("회의 검색", text: $search).textFieldStyle(.plain).accessibilityLabel("회의 제목 검색")
@@ -153,25 +152,33 @@ struct ContentView: View {
                         .buttonStyle(.plain).accessibilityLabel("검색 지우기")
                 }
             }
-            .font(.system(size: 12)).padding(10)
-            .background(.primary.opacity(0.045), in: RoundedRectangle(cornerRadius: 9))
+            .font(.system(size: 13)).padding(10)
+            .background(RecorderTheme.hover.opacity(0.75), in: RoundedRectangle(cornerRadius: 10))
             .padding(.horizontal, 16)
             HStack {
-                Text("회의 기록").font(.system(size: 11, weight: .semibold))
+                Text("회의 기록").font(.system(size: 12, weight: .semibold))
                 Spacer()
                 Text("\(model.meetings.count)").monospacedDigit().font(.system(size: 11))
             }.foregroundStyle(.secondary).padding(.horizontal, 20).padding(.top, 22).padding(.bottom, 6)
             List(selection: $model.selectedID) {
-                ForEach(filteredMeetings) { stored in
-                    meetingRow(stored).tag(stored.id)
-                        .contextMenu {
-                            Button(role: .destructive) { pendingDeletion = stored } label: {
-                                Label("회의 삭제…", systemImage: "trash")
-                            }.disabled(!model.canDeleteMeeting(stored))
+                ForEach(MeetingDateGroup.allCases, id: \.self) { group in
+                    let items = filteredMeetings.filter { MeetingDateGroup.group(for: $0.meeting.startedAt) == group }
+                    if !items.isEmpty {
+                        Section(group.title) {
+                            ForEach(items) { stored in
+                                meetingRow(stored).tag(stored.id)
+                                    .contextMenu {
+                                        Button(role: .destructive) { pendingDeletion = stored } label: {
+                                            Label("회의 삭제…", systemImage: "trash")
+                                        }.disabled(!model.canDeleteMeeting(stored))
+                                    }
+                            }
                         }
+                    }
                 }
             }
             .listStyle(.sidebar)
+            .scrollContentBackground(.hidden)
             .onDeleteCommand {
                 if let stored = model.selected, model.canDeleteMeeting(stored) { pendingDeletion = stored }
             }
@@ -183,7 +190,7 @@ struct ContentView: View {
                     }.foregroundStyle(.secondary).allowsHitTesting(false)
                 }
             }
-            Divider().padding(.horizontal, 16)
+            Divider().overlay(RecorderTheme.border).padding(.horizontal, 16)
             VStack(alignment: .leading, spacing: 14) {
                 HStack(spacing: 10) {
                     Image(systemName: "folder").foregroundStyle(RecorderTheme.accent)
@@ -204,8 +211,9 @@ struct ContentView: View {
                         Image(systemName: "chevron.right").font(.system(size: 9, weight: .semibold))
                     }.font(.system(size: 12)).contentShape(Rectangle())
                 }.buttonStyle(.plain).foregroundStyle(.secondary)
-            }.padding(20)
+            }.padding(18)
         }
+        .background(RecorderTheme.sidebar)
     }
 
     private func deleteMeeting(_ stored: StoredMeeting) {
@@ -219,47 +227,50 @@ struct ContentView: View {
     }
 
     private func meetingRow(_ stored: StoredMeeting) -> some View {
-        HStack(alignment: .top, spacing: 10) {
-            Image(systemName: stored.meeting.status == .recording ? "waveform" : "doc.text")
-                .font(.system(size: 14))
-                .foregroundStyle(stored.meeting.status == .recording ? .red : RecorderTheme.accent)
-                .frame(width: 30, height: 34)
+        HStack(alignment: .top, spacing: 9) {
+            Image(systemName: stored.meeting.status == .recording ? "record.circle.fill" : "text.alignleft")
+                .font(.system(size: 13))
+                .foregroundStyle(stored.meeting.status == .recording ? RecorderTheme.recording : .secondary)
+                .frame(width: 18, height: 20)
             VStack(alignment: .leading, spacing: 6) {
-                Text(stored.meeting.title).font(.system(size: 13, weight: .medium)).lineLimit(1)
+                Text(stored.meeting.title).font(RecorderTheme.heading(13)).lineLimit(1).foregroundStyle(.primary)
                 HStack(spacing: 5) {
                     Text(stored.meeting.startedAt, format: .dateTime.month().day().hour().minute())
                     if let end = stored.meeting.endedAt {
                         Text("·")
                         Text(shortDuration(end.timeIntervalSince(stored.meeting.startedAt)))
                     }
-                }.font(.system(size: 10)).foregroundStyle(.secondary).lineLimit(1)
+                }.font(.system(size: 11)).foregroundStyle(.secondary).lineLimit(1)
                 if stored.meeting.status != .completed {
                     Label(stored.meeting.status.label, systemImage: stored.meeting.status == .recording ? "record.circle" : "info.circle")
                         .font(.system(size: 10)).foregroundStyle(statusColor(stored.meeting.status))
                 }
             }
-        }.padding(.vertical, 8)
+        }.padding(.vertical, 5)
     }
 
     private var collapsedRecordingControls: some View {
-        HStack(spacing: 10) {
-            Image(systemName: "waveform.and.mic").foregroundStyle(.secondary)
-            Text(model.recordingTarget?.name ?? "다음 녹음 준비")
-                .font(.system(size: 12, weight: .medium))
-            Text(model.microphoneEnabled ? "내 마이크 켜짐" : "내 마이크 꺼짐")
-                .font(.system(size: 11)).foregroundStyle(.secondary)
+        HStack(spacing: 8) {
+            if model.isPolishing {
+                ProgressView().controlSize(.small)
+                Text(model.polishProgress).font(.system(size: 12)).foregroundStyle(.secondary).lineLimit(1)
+            } else {
+                Image(systemName: "waveform").foregroundStyle(.secondary)
+                Text("회의 작업 공간").font(.system(size: 12, weight: .medium)).foregroundStyle(.secondary)
+            }
             Spacer()
             Button { expandsRecordingControls = true } label: {
-                Label("녹음 준비 펼치기", systemImage: "chevron.down")
-            }.buttonStyle(.borderless).font(.system(size: 12))
-        }.padding(.horizontal, 4).padding(.vertical, 3)
+                Label("새 녹음", systemImage: "plus")
+            }.buttonStyle(.bordered).font(.system(size: 12)).disabled(model.isBusy)
+                .help("녹음 설정 열기")
+        }.padding(.horizontal, 4).padding(.vertical, 10)
     }
 
     private var recordingControls: some View {
         VStack(alignment: .leading, spacing: 16) {
             HStack {
-                Label(model.phase == .recording ? "회의 녹음 중" : "새로운 회의", systemImage: "waveform.and.mic")
-                    .font(.system(size: 12, weight: .semibold)).foregroundStyle(.secondary)
+                Label(model.phase == .recording ? "회의 녹음 중" : "새 녹음", systemImage: "waveform.and.mic")
+                    .font(.system(size: 13, weight: .semibold)).foregroundStyle(.secondary)
                 Spacer()
                 if let start = model.activeStartedAt {
                     TimelineView(.periodic(from: .now, by: 1)) { context in
@@ -315,9 +326,7 @@ struct ContentView: View {
             }
             if model.phase == .recording { liveTranscriptPanel }
         }
-        .padding(20)
-        .background(RecorderTheme.surface, in: RoundedRectangle(cornerRadius: 16))
-        .overlay { RoundedRectangle(cornerRadius: 16).strokeBorder(RecorderTheme.border) }
+        .padding(.vertical, 18).padding(.horizontal, 4)
     }
 
     private var targetPicker: some View {
@@ -334,19 +343,18 @@ struct ContentView: View {
 
     private var phaseBadge: some View {
         HStack(spacing: 5) {
-            Circle().fill(model.phase == .recording ? .red : (model.phase == .idle ? (model.canBegin ? .green : .secondary) : RecorderTheme.accent))
-                .frame(width: 5, height: 5)
-            Text(model.phase == .recording ? "REC" : model.phase == .idle ? (model.canBegin ? "준비됨" : "앱 선택 필요") : model.phase == .preparing ? "준비 중" : "저장 중")
-                .font(.system(size: 10, weight: .semibold))
-        }.padding(.horizontal, 9).padding(.vertical, 5)
-            .background(.primary.opacity(0.045), in: Capsule()).accessibilityElement(children: .combine)
+            Circle().fill(model.phase == .recording ? RecorderTheme.recording : (model.phase == .idle ? (model.canBegin ? .green : .secondary) : RecorderTheme.accent))
+                .frame(width: 7, height: 7)
+            Text(model.phase == .recording ? "녹음 중" : model.phase == .idle ? (model.canBegin ? "준비됨" : "앱 선택 필요") : model.phase == .preparing ? "준비 중" : "저장 중")
+                .font(.system(size: 11, weight: .semibold))
+        }.accessibilityElement(children: .combine)
     }
 
     @ViewBuilder private var recordingAction: some View {
         if model.phase == .recording {
-            Button(role: .destructive) { Task { await model.stop() } } label: {
+            Button(role: .destructive) { confirmsStop = true } label: {
                 Label("녹음 종료", systemImage: "stop.fill").frame(minWidth: 100)
-            }.buttonStyle(.borderedProminent).tint(.red).controlSize(.large)
+            }.buttonStyle(.borderedProminent).tint(RecorderTheme.recording).controlSize(.large)
                 .keyboardShortcut("r", modifiers: [.command, .shift])
         } else if model.phase == .preparing {
             Button("준비 취소") { Task { await model.stop() } }.controlSize(.large)
@@ -393,8 +401,7 @@ struct ContentView: View {
                         .font(.system(size: 12)).lineLimit(2).lineSpacing(3)
                         .foregroundStyle(muted || text == nil ? .secondary : .primary)
                         .frame(maxWidth: .infinity, minHeight: 34, alignment: .topLeading)
-                }.padding(12).frame(maxWidth: .infinity, alignment: .topLeading)
-                    .background(color.opacity(muted ? 0.025 : 0.055), in: RoundedRectangle(cornerRadius: 10))
+                }.padding(.vertical, 6).frame(maxWidth: .infinity, alignment: .topLeading)
             }
         }
     }
@@ -416,16 +423,13 @@ struct ContentView: View {
                 }.padding(16)
             }
         }.frame(maxWidth: .infinity, maxHeight: .infinity)
-            .background(RecorderTheme.surface, in: RoundedRectangle(cornerRadius: 16))
-            .clipShape(RoundedRectangle(cornerRadius: 16))
-            .overlay { RoundedRectangle(cornerRadius: 16).strokeBorder(RecorderTheme.border) }
     }
 
     private func documentHeader(_ stored: StoredMeeting) -> some View {
         VStack(alignment: .leading, spacing: 12) {
             HStack(alignment: .top, spacing: 12) {
                 VStack(alignment: .leading, spacing: 9) {
-                    Text(stored.meeting.title).font(.system(size: 21, weight: .semibold)).lineLimit(2).textSelection(.enabled)
+                    Text(stored.meeting.title).font(RecorderTheme.heading(23)).lineLimit(2).textSelection(.enabled)
                     HStack(spacing: 12) {
                         Label { Text(stored.meeting.startedAt, format: .dateTime.year().month().day().hour().minute()) } icon: {
                             Image(systemName: "calendar")
@@ -436,7 +440,9 @@ struct ContentView: View {
                         if let diarization = stored.meeting.diarization, diarization.state == .completed, diarization.speakerCount > 0 {
                             Label("상대방 \(diarization.speakerCount)명", systemImage: "person.2")
                         }
-                    }.font(.system(size: 10)).foregroundStyle(.secondary)
+                        Label(stored.meeting.status.label, systemImage: stored.meeting.status == .recording ? "record.circle.fill" : "circle.fill")
+                            .foregroundStyle(statusColor(stored.meeting.status))
+                    }.font(.system(size: 11)).foregroundStyle(.secondary)
                 }
                 Spacer(minLength: 0)
                 Menu {
@@ -487,34 +493,35 @@ struct ContentView: View {
                     Text(error).font(.caption).foregroundStyle(.secondary)
                 }
             }
-        }.padding(.horizontal, 24).padding(.top, 22).padding(.bottom, 18)
+        }.padding(.horizontal, 4).padding(.top, 20).padding(.bottom, 16)
     }
 
     private func documentTabs(_ stored: StoredMeeting) -> some View {
         HStack(spacing: 24) {
             documentTab("대화록", symbol: "text.alignleft", value: "transcript")
+            documentTab("다듬은 대화록", symbol: "text.badge.checkmark", value: "polished")
             documentTab("회의 요약", symbol: "sparkles", value: "summary")
             Spacer(minLength: 4)
             if model.selectedIsActive && tab == "transcript" {
                 Toggle("자동 따라가기", isOn: $followLive).toggleStyle(.checkbox).font(.system(size: 10))
             }
             Button(action: model.copySummaryRequest) {
-                Label("LLM으로 요약", systemImage: "arrow.up.right").font(.system(size: 11, weight: .medium))
+                Label("요약 요청 복사", systemImage: "arrow.up.right").font(.system(size: 11, weight: .medium))
             }.buttonStyle(.bordered).disabled(stored.meeting.status != .completed)
                 .help("요약 요청을 복사합니다. MCP를 연결한 LLM 채팅에 붙여 넣으세요.").padding(.bottom, 10)
-        }.padding(.horizontal, 24)
+        }.padding(.horizontal, 4)
     }
 
     private func documentTab(_ label: String, symbol: String, value: String) -> some View {
         Button { tab = value } label: {
             Label(label, systemImage: symbol)
-                .font(.system(size: 12, weight: tab == value ? .semibold : .regular))
+                .font(.system(size: 13, weight: tab == value ? .semibold : .regular))
                 .foregroundStyle(tab == value ? RecorderTheme.accent : .secondary)
-                .padding(.vertical, 13).contentShape(Rectangle())
+                .padding(.vertical, 15).contentShape(Rectangle())
                 .overlay(alignment: .bottom) {
                     if tab == value { Capsule().fill(RecorderTheme.accent).frame(height: 2) }
                 }
-        }.buttonStyle(.plain).accessibilityValue(tab == value ? "선택됨" : "")
+        }.buttonStyle(.plain).modifier(QuietHover()).accessibilityValue(tab == value ? "선택됨" : "")
     }
 
     private func documentContent(_ stored: StoredMeeting) -> some View {
@@ -543,15 +550,17 @@ struct ContentView: View {
                                 }
                             }
                             Color.clear.frame(height: 1).id("transcript-bottom")
-                        }.padding(28).frame(maxWidth: 860, alignment: .leading)
+                        }.padding(.vertical, 28).padding(.horizontal, 8).frame(maxWidth: RecorderTheme.contentWidth, alignment: .leading)
                             .frame(maxWidth: .infinity, alignment: .center).textSelection(.enabled)
                     }
+                } else if tab == "polished" {
+                    polishedContent(stored)
                 } else {
                     let summary = try? String(contentsOf: stored.directory.appendingPathComponent("summary.md"), encoding: .utf8)
                     if let summary {
-                        Text(LocalizedStringKey(summary)).font(.system(size: 14)).lineSpacing(7)
-                            .textSelection(.enabled).padding(28)
-                            .frame(maxWidth: 860, alignment: .leading).frame(maxWidth: .infinity, alignment: .center)
+                        SummaryMarkdownView(markdown: summary)
+                            .textSelection(.enabled).padding(.vertical, 28).padding(.horizontal, 8)
+                            .frame(maxWidth: RecorderTheme.contentWidth, alignment: .leading).frame(maxWidth: .infinity, alignment: .center)
                     } else {
                         VStack(alignment: .leading, spacing: 20) {
                             HStack(alignment: .top, spacing: 14) {
@@ -563,6 +572,8 @@ struct ContentView: View {
                                     Text("MCP를 연결한 LLM에 요약을 요청해 보세요.\n주요 내용, 결정 사항, 할 일이 저장되면 여기에 표시됩니다.")
                                         .font(.system(size: 12)).lineSpacing(4).foregroundStyle(.secondary)
                                         .fixedSize(horizontal: false, vertical: true)
+                                    Text("요약 요청을 연결된 LLM에 전달하면, 저장된 결과가 이곳에 나타납니다.")
+                                        .font(.system(size: 11)).foregroundStyle(.secondary)
                                 }
                             }
                             HStack(spacing: 16) {
@@ -584,17 +595,44 @@ struct ContentView: View {
         }
     }
 
-    private func playbackParagraph(_ paragraph: TranscriptPlaybackParagraph, in stored: StoredMeeting) -> some View {
-        let color: Color = paragraph.source == .microphone ? RecorderTheme.accent : .teal
+    private func polishedContent(_ stored: StoredMeeting) -> some View {
+        let paragraphs = TranscriptDocument.playbackParagraphs(stored.meeting)
+        return VStack(alignment: .leading, spacing: 18) {
+            HStack(alignment: .top) {
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("원문을 보존하며 이 Mac에서 문장을 다듬습니다.").font(.system(size: 13, weight: .semibold))
+                    Text("AI가 의미를 바꿀 수 있습니다. 원문과 녹음을 확인해 주세요.")
+                        .font(.system(size: 11)).foregroundStyle(.secondary)
+                    if !model.polishProgress.isEmpty { Text(model.polishProgress).font(.caption).foregroundStyle(.secondary) }
+                }
+                Spacer()
+                if model.isPolishing {
+                    Button("중단", action: model.cancelPolishing).buttonStyle(.bordered)
+                } else {
+                    Button("문장 다듬기", action: model.startPolishing).buttonStyle(.borderedProminent)
+                        .disabled(model.isBusy || stored.meeting.status != .completed || paragraphs.isEmpty)
+                }
+            }
+            LazyVStack(alignment: .leading, spacing: 18) {
+                ForEach(paragraphs) { paragraph in
+                    playbackParagraph(paragraph, in: stored, polishedText: model.polishedText(for: paragraph, in: stored), showPolished: true)
+                }
+            }
+        }.padding(.vertical, 28).padding(.horizontal, 8).frame(maxWidth: RecorderTheme.contentWidth, alignment: .leading)
+            .frame(maxWidth: .infinity, alignment: .center).textSelection(.enabled)
+    }
+
+    private func playbackParagraph(_ paragraph: TranscriptPlaybackParagraph, in stored: StoredMeeting,
+                                   polishedText: String? = nil, showPolished: Bool = false) -> some View {
+        let color: Color = paragraph.source == .microphone ? RecorderTheme.accent : .secondary
         let active = playback.meetingID == stored.id && playback.hasStarted &&
             playback.position >= paragraph.start && playback.position < paragraph.end
-        return HStack(alignment: .top, spacing: 14) {
-            Image(systemName: paragraph.source == .microphone ? "person.fill" : "person.wave.2.fill")
-                .font(.system(size: 13)).foregroundStyle(color).frame(width: 32, height: 32)
-                .background(color.opacity(0.09), in: RoundedRectangle(cornerRadius: 10))
+        return HStack(alignment: .top, spacing: 12) {
+            Image(systemName: paragraph.source == .microphone ? "person.fill" : "waveform")
+                .font(.system(size: 12)).foregroundStyle(color).frame(width: 20, height: 20)
             VStack(alignment: .leading, spacing: 10) {
                 HStack(spacing: 10) {
-                    Text(paragraph.label).font(.system(size: 12, weight: .semibold)).foregroundStyle(color)
+                    Text(paragraph.label).font(.system(size: 12, weight: .semibold)).foregroundStyle(.primary)
                     Button {
                         playback.seek(to: paragraph.start, in: stored, autoplay: true)
                     } label: {
@@ -606,15 +644,22 @@ struct ContentView: View {
                         .accessibilityLabel(TranscriptMarkdown.timestamp(paragraph.start) + "부터 문단 재생")
                         .accessibilityValue(active ? "현재 재생 구간" : "")
                     Spacer()
-                    Button { model.copyText(paragraph.text, message: "문단 복사됨") } label: {
+                    Button { model.copyText(showPolished ? (polishedText ?? paragraph.text) : paragraph.text, message: "문단 복사됨") } label: {
                         Image(systemName: "doc.on.doc").font(.system(size: 11))
                     }.buttonStyle(.plain).foregroundStyle(.secondary)
                         .help("문단 복사").accessibilityLabel("문단 복사")
-                }.padding(.top, 7)
-                Text(paragraph.text).font(.system(size: 14)).lineSpacing(7).foregroundStyle(.primary.opacity(0.9))
+                }
+                if showPolished {
+                    Text(polishedText ?? "아직 다듬지 않은 문단입니다.")
+                        .font(RecorderTheme.body()).lineSpacing(8).foregroundStyle(polishedText == nil ? .secondary : .primary)
+                    Text("원문").font(.caption.weight(.semibold)).foregroundStyle(.secondary)
+                    Text(paragraph.text).font(.system(size: 12)).lineSpacing(5).foregroundStyle(.secondary)
+                } else {
+                    Text(paragraph.text).font(RecorderTheme.body()).lineSpacing(8).foregroundStyle(.primary)
+                }
             }.frame(maxWidth: .infinity, alignment: .leading)
-        }.padding(10)
-            .background(active ? RecorderTheme.accent.opacity(0.07) : .clear, in: RoundedRectangle(cornerRadius: 10))
+        }.padding(.vertical, 4)
+            .background(active ? RecorderTheme.accent.opacity(0.05) : .clear, in: RoundedRectangle(cornerRadius: 10))
     }
 
     private func documentEmptyState(title: String, message: String, symbol: String) -> some View {
@@ -671,7 +716,7 @@ struct ContentView: View {
                     Button("Finder에서 보기", action: model.revealSelected)
                 } label: { Image(systemName: "ellipsis").frame(width: 24, height: 24) }
                     .menuStyle(.borderlessButton).fixedSize().accessibilityLabel("녹음 파일 더 보기")
-            }.padding(.horizontal, 24).padding(.vertical, 12)
+            }.padding(.horizontal, 4).padding(.vertical, 12)
         }.onAppear { playback.prepare(stored) }
     }
 
@@ -690,7 +735,7 @@ struct ContentView: View {
 
     private func statusColor(_ status: MeetingStatus) -> Color {
         switch status {
-        case .recording: return .red
+        case .recording: return RecorderTheme.recording
         case .failed, .interrupted: return .orange
         case .completed: return .secondary
         case .finalizing: return RecorderTheme.accent
