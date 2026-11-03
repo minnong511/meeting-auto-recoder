@@ -85,7 +85,8 @@ private final class RecordingIslandHelperController {
     private var lastProcessID: Int32?
     private var animatedFrame: NSRect?
     private var frameTimer: Timer?
-    private let expansionDuration = 0.24
+    private let openingDuration = 0.30
+    private let closingDuration = 0.22
 
     func start() {
         state.stop = { [weak self] in
@@ -211,6 +212,8 @@ private final class RecordingIslandHelperController {
         // NSWindow's animator and SwiftUI's layout otherwise interpolate their
         // sizes independently, leaving a visible gap at the notch.
         let startHeight = panel.frame.height
+        let opening = newFrame.height > startHeight
+        let duration = opening ? openingDuration : closingDuration
         let startTime = ProcessInfo.processInfo.systemUptime
         let animationTop = newFrame.maxY
         animatedFrame = newFrame
@@ -218,8 +221,8 @@ private final class RecordingIslandHelperController {
             MainActor.assumeIsolated {
                 guard let self, let panel, self.animatedFrame == newFrame else { timer.invalidate(); return }
                 let elapsed = ProcessInfo.processInfo.systemUptime - startTime
-                let progress = min(1, max(0, elapsed / self.expansionDuration))
-                let eased = progress * progress * (3 - 2 * progress)
+                let progress = min(1, max(0, elapsed / duration))
+                let eased = opening ? 1 - pow(1 - progress, 3) : progress * progress * (3 - 2 * progress)
                 let height = startHeight + (newFrame.height - startHeight) * eased
                 panel.setFrame(NSRect(x: newFrame.minX, y: animationTop - height, width: newFrame.width, height: height),
                                display: true, animate: false)
@@ -250,7 +253,8 @@ private final class RecordingIslandHelperController {
         guard state.expanded != expanded else { return }
         let animate = panel?.isVisible == true && !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
         if animate {
-            withAnimation(.easeInOut(duration: expansionDuration)) { state.expanded = expanded }
+            let animation: Animation = expanded ? .easeOut(duration: openingDuration) : .easeInOut(duration: closingDuration)
+            withAnimation(animation) { state.expanded = expanded }
         } else {
             state.expanded = expanded
         }
