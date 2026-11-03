@@ -1,6 +1,7 @@
 import AppKit
 import Combine
 import Darwin
+import RecorderCore
 import SwiftUI
 
 /// Keeps the recording controls in an accessory process, independent of Spaces transitions.
@@ -9,7 +10,6 @@ final class RecordingIslandController {
     private weak var model: RecorderModel?
     private var phaseSubscription: AnyCancellable?
     private var targetSubscription: AnyCancellable?
-    private var readinessSubscriptions = Set<AnyCancellable>()
     private var timer: Timer?
     private var hideWork: DispatchWorkItem?
     private var retryWork: DispatchWorkItem?
@@ -21,12 +21,12 @@ final class RecordingIslandController {
     private var sessionStarted = false
     private var didRecord = false
     private var stopRequested = false
-    private var startRequested = false
     private var showingEnded = false
     private var lastPhase: RecorderModel.Phase = .idle
     private var message = RecordingIslandMessage(phase: "idle", elapsed: "00:00", targetName: "", bundleID: nil, processID: nil)
     private var failures = 0
     private var retryExhausted = false
+    private var levelHistory = RecordingLevelHistory()
 
     private final class Child {
         let id = UUID()
@@ -57,12 +57,6 @@ final class RecordingIslandController {
             self.message.processID = target.processID
             self.sendState()
         }
-        // Published values are delivered in willSet. Read the combined state on
-        // the next main-actor turn, after all related model updates have settled.
-        model.$selectedTargetID.dropFirst().sink { [weak self] _ in self?.scheduleReadinessRefresh() }.store(in: &readinessSubscriptions)
-        model.$availableApps.dropFirst().sink { [weak self] _ in self?.scheduleReadinessRefresh() }.store(in: &readinessSubscriptions)
-        model.$root.dropFirst().sink { [weak self] _ in self?.scheduleReadinessRefresh() }.store(in: &readinessSubscriptions)
-        model.$isPolishing.dropFirst().sink { [weak self] _ in self?.scheduleReadinessRefresh() }.store(in: &readinessSubscriptions)
     }
 
     func setEnabled(_ value: Bool) {
@@ -82,7 +76,6 @@ final class RecordingIslandController {
         } else {
             failures = 0
             retryExhausted = false
-            if lastPhase == .idle && !showingEnded { refreshReadiness() }
             sendState()
         }
     }
@@ -106,7 +99,10 @@ final class RecordingIslandController {
         hideWork = nil
         showingEnded = false
         stopRequested = false
-        startRequested = false
+        if phase != .recording {
+            levelHistory.reset()
+            message.levels = levelHistory.levels
+        }
         switch phase {
         case .preparing:
             sessionStarted = true
@@ -122,7 +118,7 @@ final class RecordingIslandController {
             sessionStarted = true
             didRecord = true
             message.phase = "recording"
-            updateElapsed()
+            updateRecordingState()
             startTimer()
         case .stopping:
             stopTimer()
@@ -130,11 +126,9 @@ final class RecordingIslandController {
                 sessionStarted = false
                 message = RecordingIslandMessage(phase: "idle", elapsed: "00:00", targetName: "", bundleID: nil, processID: nil)
                 sendState()
-                scheduleReadinessRefresh()
                 return
             }
             message.phase = "stopping"
-            message.canStart = false
             sendState()
         case .idle:
             stopTimer()
@@ -144,13 +138,11 @@ final class RecordingIslandController {
             if showEnded, child != nil {
                 showingEnded = true
                 message.phase = "ended"
-                message.canStart = false
                 sendState()
                 let item = DispatchWorkItem { [weak self] in
                     guard let self, self.lastPhase == .idle else { return }
                     self.showingEnded = false
                     self.message = RecordingIslandMessage(phase: "idle", elapsed: "00:00", targetName: "", bundleID: nil, processID: nil)
-                    self.refreshReadiness()
                     self.sendState()
                 }
                 hideWork = item
@@ -158,21 +150,8 @@ final class RecordingIslandController {
             } else {
                 message = RecordingIslandMessage(phase: "idle", elapsed: "00:00", targetName: "", bundleID: nil, processID: nil)
                 sendState()
-                scheduleReadinessRefresh()
             }
         }
-    }
-
-    private func scheduleReadinessRefresh() {
-        Task { @MainActor [weak self] in self?.refreshReadiness() }
-    }
-
-    private func refreshReadiness() {
-        guard !isTerminating, !showingEnded, !sessionStarted, let model else { return }
-        let canStart = model.canBegin && model.root != nil
-        guard message.canStart != canStart else { return }
-        message.canStart = canStart
-        sendState()
     }
 
     private func startChild() {
@@ -267,7 +246,6 @@ final class RecordingIslandController {
             for byte in bytes.prefix(count) {
                 if byte == 10 {
                     if !child.ignoringLine, child.inputBuffer == Data("stop".utf8) { requestStop() }
-                    if !child.ignoringLine, child.inputBuffer == Data("start".utf8) { requestStart() }
                     child.inputBuffer.removeAll(keepingCapacity: true)
                     child.ignoringLine = false
                 } else if !child.ignoringLine {
@@ -282,24 +260,6 @@ final class RecordingIslandController {
         guard !stopRequested, lastPhase == .preparing || lastPhase == .recording else { return }
         stopRequested = true
         Task { [weak model] in await model?.stop() }
-    }
-
-    private func requestStart() {
-        guard !isTerminating, !startRequested, let model else { return }
-        startRequested = true
-        guard lastPhase == .idle, !showingEnded, model.canBegin, model.root != nil else {
-            // Never start as a side effect of opening configuration.
-            NSApp.activate(ignoringOtherApps: true)
-            NSApp.windows.first { $0.canBecomeMain }?.makeKeyAndOrderFront(nil)
-            if !model.isBusy {
-                model.errorMessage = "녹음할 앱과 저장 폴더를 먼저 선택해 주세요."
-            }
-            refreshReadiness()
-            sendState()
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { [weak self] in self?.startRequested = false }
-            return
-        }
-        model.begin()
     }
 
     private func childExited(id: UUID) {
@@ -360,21 +320,28 @@ final class RecordingIslandController {
 
     private func startTimer() {
         stopTimer()
-        let next = Timer(timeInterval: 1, repeats: true) { [weak self] _ in
-            Task { @MainActor in self?.updateElapsed() }
+        let next = Timer(timeInterval: 0.1, repeats: true) { [weak self] _ in
+            Task { @MainActor in self?.updateRecordingState() }
         }
-        next.tolerance = 0.2
+        next.tolerance = 0.02
         RunLoop.main.add(next, forMode: .common)
         timer = next
     }
 
     private func stopTimer() { timer?.invalidate(); timer = nil }
 
-    private func updateElapsed() {
-        if let start = model?.activeStartedAt {
+    private func updateRecordingState() {
+        guard lastPhase == .recording, let model else { return }
+        if let start = model.activeStartedAt {
             let seconds = max(0, Int(Date().timeIntervalSince(start)))
             message.elapsed = String(format: "%02d:%02d", seconds / 60, seconds % 60)
         }
+        let metrics = model.metrics
+        levelHistory.sample(systemLevel: metrics.systemLevel, systemFrames: metrics.systemFrames,
+                            microphoneLevel: model.microphoneEnabled ? metrics.microphoneLevel : 0,
+                            microphoneFrames: metrics.microphoneFrames,
+                            now: ProcessInfo.processInfo.systemUptime)
+        message.levels = levelHistory.levels
         sendState()
     }
 
@@ -395,14 +362,14 @@ final class RecordingIslandState: ObservableObject {
     @Published var phase: Phase = .preparing
     @Published var elapsed = "00:00"
     @Published var expanded = false
+    @Published var expansionProgress = 0.0
     @Published var hasNotch = false
     @Published var notchWidth: CGFloat = 0
     @Published var panelWidth: CGFloat = 432
     @Published var targetIcon: NSImage?
     @Published var targetName = ""
-    @Published var canStart = false
+    @Published var levels = Array(repeating: 0.0, count: RecordingLevelHistory.sampleCount)
     var hoverChanged: ((Bool) -> Void)?
     var toggleExpanded: (() -> Void)?
     var stop: (() -> Void)?
-    var start: (() -> Void)?
 }

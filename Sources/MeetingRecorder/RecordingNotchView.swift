@@ -21,10 +21,13 @@ struct RecordingNotchView: View {
     var body: some View {
         VStack(spacing: 0) {
             topStrip
-            if state.expanded {
-                expandedContent
-                    .transition(.opacity)
-            }
+            // Keep the layout mounted; one display-synchronized progress drives
+            // the window's reveal and this content instead of two animations.
+            expandedContent
+                .opacity(state.expansionProgress)
+                .offset(y: -6 * (1 - state.expansionProgress))
+                .allowsHitTesting(state.expanded)
+                .accessibilityHidden(!state.expanded)
         }
         // This host has a constant size and is clipped by the resizing AppKit
         // container. Its top row therefore never moves while the panel grows.
@@ -109,13 +112,12 @@ struct RecordingNotchView: View {
     private var compactControl: some View {
         switch state.phase {
         case .idle, .ended:
-            Button(action: { state.start?() }) {
-                controlLabel(symbol: state.canStart ? "record.circle" : "gearshape", title: state.canStart ? "시작" : "설정")
-            }
-            .buttonStyle(.plain)
-            .accessibilityLabel(state.canStart ? "녹음 시작" : "녹음 설정 확인")
-            .accessibilityHint(state.canStart ? "녹음을 시작합니다" : "녹음 설정을 확인합니다")
-            .help(state.canStart ? "녹음 시작" : "녹음 설정 확인")
+            Text(state.elapsed)
+                .font(.system(size: 12, weight: .medium, design: .monospaced))
+                .monospacedDigit()
+                .foregroundStyle(Color.white.opacity(0.5))
+                .lineLimit(1)
+                .accessibilityLabel("경과 시간 \(state.elapsed)")
         case .preparing, .recording:
             Button(action: { state.stop?() }) {
                 controlLabel(symbol: "stop.fill", title: state.phase == .recording ? "정지" : "취소")
@@ -147,61 +149,53 @@ struct RecordingNotchView: View {
     }
 
     private var expandedContent: some View {
-        HStack(alignment: .center, spacing: 12) {
+        HStack(alignment: .center, spacing: 22) {
             VStack(alignment: .leading, spacing: 5) {
-                Text(phaseText)
-                    .font(.system(size: 14, weight: .semibold))
-                    .foregroundStyle(.white)
-                    .lineLimit(1)
-                if !state.targetName.isEmpty {
-                    Text(state.targetName)
-                        .font(.system(size: 11, weight: .medium))
-                        .foregroundStyle(Color.white.opacity(0.55))
-                        .lineLimit(1)
-                }
-                Text(state.phase == .recording ? state.elapsed : detailText)
-                    .font(.system(size: 12, weight: .medium, design: .monospaced))
+                Text(state.elapsed)
+                    .font(.system(size: 27, weight: .medium, design: .monospaced))
                     .monospacedDigit()
-                    .foregroundStyle(Color.white.opacity(0.62))
+                    .foregroundStyle(.white)
                     .lineLimit(1)
-                    .accessibilityLabel(state.phase == .recording ? "경과 시간 \(state.elapsed)" : detailText)
+                    .minimumScaleFactor(0.65)
+                    .accessibilityLabel("경과 시간 \(state.elapsed)")
+                Text(phaseText)
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundStyle(Color.white.opacity(0.55))
+                    .lineLimit(1)
             }
-            Spacer(minLength: 0)
-            if state.phase == .recording || state.phase == .preparing {
-                Button(action: { state.stop?() }) {
-                    HStack(spacing: 6) {
-                        Image(systemName: "stop.fill").font(.system(size: 9, weight: .bold))
-                        Text(state.phase == .recording ? "종료" : "취소")
-                            .font(.system(size: 12, weight: .semibold))
+            .frame(width: 110, alignment: .leading)
+
+            VStack(alignment: .leading, spacing: 8) {
+                HStack(spacing: 6) {
+                    Text(state.targetName.isEmpty || state.phase == .idle ? detailText : state.targetName)
+                        .lineLimit(1)
+                        .truncationMode(.tail)
+                    Spacer(minLength: 0)
+                    if state.phase == .recording {
+                        Text("입력 음량").fixedSize()
                     }
-                    .foregroundStyle(.white)
-                    .padding(.horizontal, 14)
-                    .frame(height: 34)
-                    .background(Color.white.opacity(0.14), in: Capsule())
-                    .contentShape(Capsule())
                 }
-                .buttonStyle(.plain)
-                .accessibilityLabel(state.phase == .recording ? "녹음 종료" : "녹음 준비 취소")
-                .help(state.phase == .recording ? "녹음을 종료하고 저장합니다" : "녹음 준비를 취소합니다")
-            } else if state.phase == .idle || state.phase == .ended {
-                Button(action: { state.start?() }) {
-                    HStack(spacing: 6) {
-                        Image(systemName: state.canStart ? "record.circle" : "gearshape").font(.system(size: 11, weight: .bold))
-                        Text(state.canStart ? "시작" : "설정").font(.system(size: 12, weight: .semibold))
+                .font(.system(size: 10, weight: .medium))
+                .foregroundStyle(Color.white.opacity(0.55))
+
+                GeometryReader { geometry in
+                    HStack(alignment: .center, spacing: 3) {
+                        ForEach(state.levels.indices, id: \.self) { index in
+                            Capsule()
+                                .fill(state.phase == .recording ? statusColor : Color.white.opacity(0.2))
+                                .frame(width: max(1, (geometry.size.width - CGFloat(state.levels.count - 1) * 3) / CGFloat(state.levels.count)),
+                                       height: max(2, CGFloat(state.levels[index]) * geometry.size.height))
+                        }
                     }
-                    .foregroundStyle(.white)
-                    .padding(.horizontal, 14)
-                    .frame(height: 34)
-                    .background(Color.white.opacity(0.14), in: Capsule())
-                    .contentShape(Capsule())
+                    .frame(height: geometry.size.height)
+                    .animation(reduceMotion ? nil : .linear(duration: 0.1), value: state.levels)
                 }
-                .buttonStyle(.plain)
-                .accessibilityLabel(state.canStart ? "녹음 시작" : "녹음 설정 확인")
-                .accessibilityHint(state.canStart ? "녹음을 시작합니다" : "녹음 설정을 확인합니다")
-            } else if state.phase == .stopping {
-                ProgressView().controlSize(.small).tint(.white)
-                    .accessibilityLabel("녹음 저장 중")
+                .frame(height: 36)
+                .accessibilityElement(children: .ignore)
+                .accessibilityLabel("녹음 입력 음량")
+                .accessibilityValue("\(Int((state.levels.last ?? 0) * 100)) 퍼센트")
             }
+            .frame(maxWidth: .infinity)
         }
         .padding(.horizontal, 21)
         .frame(width: width, height: 100)
@@ -209,7 +203,7 @@ struct RecordingNotchView: View {
 
     private var detailText: String {
         switch state.phase {
-        case .idle: return state.canStart ? "녹음을 시작할 수 있습니다" : "시작하려면 설정을 확인해 주세요"
+        case .idle: return "앱에서 녹음을 시작하세요"
         case .preparing: return "준비 중"
         case .recording: return state.elapsed
         case .stopping: return "잠시만 기다려 주세요"

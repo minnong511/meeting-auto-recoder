@@ -1,4 +1,6 @@
 import AppKit
+import QuartzCore
+import RecorderCore
 import SwiftUI
 
 /// The control process receives display-only state, never recording contents.
@@ -8,7 +10,7 @@ struct RecordingIslandMessage: Codable {
     var targetName: String
     var bundleID: String?
     var processID: Int32?
-    var canStart: Bool = false
+    var levels: [Double]? = nil
 }
 
 @MainActor
@@ -70,12 +72,13 @@ private final class RecordingIslandInput {
 }
 
 @MainActor
-private final class RecordingIslandHelperController {
+private final class RecordingIslandHelperController: NSObject {
     private let state = RecordingIslandState()
     private var panel: IslandHelperPanel?
     private var input: RecordingIslandInput?
     private var screenObserver: NSObjectProtocol?
     private var sessionObservers: [NSObjectProtocol] = []
+    private var placementWork: [DispatchWorkItem] = []
     private var collapseWork: DispatchWorkItem?
     private var anchorDisplayID: NSNumber?
     private var sessionActive = true
@@ -84,18 +87,17 @@ private final class RecordingIslandHelperController {
     private var lastBundleID: String?
     private var lastProcessID: Int32?
     private var animatedFrame: NSRect?
-    private var frameTimer: Timer?
-    private let openingDuration = 0.30
-    private let closingDuration = 0.22
+    private var displayLink: CADisplayLink?
+    private var lastFrameTime: CFTimeInterval?
+    private var motion = RecordingIslandMotion()
+    private var animationFrames = 0
+    private var largestFrameGap: CFTimeInterval = 0
 
     func start() {
         state.stop = { [weak self] in
             guard let self, !self.stopSent else { return }
             self.stopSent = true
             try? FileHandle.standardOutput.write(contentsOf: Data("stop\n".utf8))
-        }
-        state.start = {
-            try? FileHandle.standardOutput.write(contentsOf: Data("start\n".utf8))
         }
         state.hoverChanged = { [weak self] hovering in self?.hoverChanged(hovering) }
         state.toggleExpanded = { [weak self] in
@@ -104,8 +106,17 @@ private final class RecordingIslandHelperController {
         }
         screenObserver = NotificationCenter.default.addObserver(
             forName: NSApplication.didChangeScreenParametersNotification, object: nil, queue: .main
-        ) { [weak self] _ in Task { @MainActor in self?.positionPanel() } }
+        ) { [weak self] _ in Task { @MainActor in self?.restorePlacement() } }
         let workspaceCenter = NSWorkspace.shared.notificationCenter
+        // isVisible can stay true while WindowServer moves to another Space.
+        // Reorder without activating the app, both now and after the transition.
+        for name in [NSWorkspace.activeSpaceDidChangeNotification,
+                     NSWorkspace.didActivateApplicationNotification,
+                     NSWorkspace.screensDidWakeNotification] {
+            sessionObservers.append(workspaceCenter.addObserver(
+                forName: name, object: nil, queue: .main
+            ) { [weak self] _ in Task { @MainActor in self?.restorePlacement() } })
+        }
         sessionObservers.append(workspaceCenter.addObserver(
             forName: NSWorkspace.sessionDidResignActiveNotification, object: nil, queue: .main
         ) { [weak self] _ in Task { @MainActor in self?.setSessionActive(false) } })
@@ -122,18 +133,23 @@ private final class RecordingIslandHelperController {
     }
 
     private func receive(_ message: RecordingIslandMessage) {
+        let phase: RecordingIslandState.Phase
         switch message.phase {
-        case "idle": state.phase = .idle
-        case "preparing": state.phase = .preparing
-        case "recording": state.phase = .recording
-        case "stopping": state.phase = .stopping
-        case "ended": state.phase = .ended
+        case "idle": phase = .idle
+        case "preparing": phase = .preparing
+        case "recording": phase = .recording
+        case "stopping": phase = .stopping
+        case "ended": phase = .ended
         default: return
         }
-        if message.phase == "idle" { stopSent = false }
-        state.elapsed = message.elapsed
-        state.canStart = message.canStart
-        state.targetName = message.targetName
+        if state.phase != phase { state.phase = phase }
+        if message.phase == "idle" || message.phase == "ended" { stopSent = false }
+        if state.elapsed != message.elapsed { state.elapsed = message.elapsed }
+        let samples = state.phase == .recording ? Array((message.levels ?? []).suffix(RecordingLevelHistory.sampleCount)) : []
+        let levels = Array(repeating: 0, count: RecordingLevelHistory.sampleCount - samples.count)
+            + samples.map { $0.isFinite ? min(1, max(0, $0)) : 0 }
+        if state.levels != levels { state.levels = levels }
+        if state.targetName != message.targetName { state.targetName = message.targetName }
         if !hasState || message.bundleID != lastBundleID || message.processID != lastProcessID {
             lastBundleID = message.bundleID
             lastProcessID = message.processID
@@ -141,7 +157,8 @@ private final class RecordingIslandHelperController {
         }
         if !hasState { anchorDisplayID = displayID(preferredScreen()) }
         hasState = true
-        showPanel()
+        // Audio updates must not reposition the window or interrupt its expansion.
+        if panel == nil || panel?.isVisible != true { showPanel() }
     }
 
     private func targetIcon(bundleID: String?, processID: Int32?) -> NSImage? {
@@ -162,6 +179,7 @@ private final class RecordingIslandHelperController {
                                            styleMask: [.borderless, .nonactivatingPanel],
                                            backing: .buffered, defer: false)
             window.isOpaque = false
+            window.title = "녹음 상태"
             window.backgroundColor = .clear
             window.hasShadow = false
             window.isFloatingPanel = true
@@ -175,6 +193,34 @@ private final class RecordingIslandHelperController {
         }
         positionPanel()
         if panel?.isVisible != true { panel?.orderFrontRegardless() }
+    }
+
+    private func restorePlacement() {
+        placementWork.forEach { $0.cancel() }
+        placementWork.removeAll()
+        guard sessionActive, hasState else { return }
+        restorePanel()
+        for delay in [0.15, 0.65] {
+            let work = DispatchWorkItem { [weak self] in self?.restorePanel() }
+            placementWork.append(work)
+            DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: work)
+        }
+    }
+
+    private func restorePanel() {
+        guard sessionActive, hasState else { return }
+        showPanel()
+        // A nonactivating panel can be raised without moving focus or switching
+        // the user back to the recorder's Space. Never use makeKeyAndOrderFront.
+        panel?.orderFrontRegardless()
+        tracePlacement()
+    }
+
+    // Opt-in diagnostics report geometry only, never audio, transcript, or app names.
+    private func tracePlacement() {
+        guard ProcessInfo.processInfo.environment["RECORDER_ISLAND_DIAGNOSTICS"] == "1", let panel else { return }
+        let frame = NSStringFromRect(panel.frame)
+        fputs("island-placement frame=\(frame) visible=\(panel.isVisible) activeSpace=\(panel.isOnActiveSpace)\n", stderr)
     }
 
     private func positionPanel(animated: Bool = false) {
@@ -193,49 +239,75 @@ private final class RecordingIslandHelperController {
         if state.notchWidth != notchWidth { state.notchWidth = notchWidth }
         if state.panelWidth != width { state.panelWidth = width }
         let height: CGFloat = state.expanded ? 148 : 48
-        let top = hasNotch ? frame.maxY : screen.visibleFrame.maxY
+        // visibleFrame changes when the menu bar hides in a full-screen Space.
+        // Anchor to the physical display edge so the island never jumps vertically.
+        let top = frame.maxY
         let x = max(frame.minX, min(center - width / 2, frame.maxX - width))
         let newFrame = NSRect(x: x.rounded(), y: (top - height).rounded(), width: width, height: height)
-        // State messages arrive every second; they must not snap an in-flight
-        // expansion to its final frame. Screen changes still apply immediately.
+        // Space notifications must not snap an in-flight expansion to its end.
+        // A change of physical display geometry still applies immediately.
         if animatedFrame == newFrame { return }
-        frameTimer?.invalidate()
-        frameTimer = nil
-        animatedFrame = nil
-        guard panel.frame != newFrame else { return }
         guard animated else {
+            stopAnimation()
+            motion.snap(expanded: state.expanded)
+            updateReveal()
             panel.setFrame(newFrame, display: true, animate: false)
             return
         }
-
-        // Derive both origin and height from the same value on every frame.
-        // NSWindow's animator and SwiftUI's layout otherwise interpolate their
-        // sizes independently, leaving a visible gap at the notch.
-        let startHeight = panel.frame.height
-        let opening = newFrame.height > startHeight
-        let duration = opening ? openingDuration : closingDuration
-        let startTime = ProcessInfo.processInfo.systemUptime
-        let animationTop = newFrame.maxY
+        motion.retarget(expanded: state.expanded)
         animatedFrame = newFrame
-        let timer = Timer(timeInterval: 1.0 / 60.0, repeats: true) { [weak self, weak panel] timer in
-            MainActor.assumeIsolated {
-                guard let self, let panel, self.animatedFrame == newFrame else { timer.invalidate(); return }
-                let elapsed = ProcessInfo.processInfo.systemUptime - startTime
-                let progress = min(1, max(0, elapsed / duration))
-                let eased = opening ? 1 - pow(1 - progress, 3) : progress * progress * (3 - 2 * progress)
-                let height = startHeight + (newFrame.height - startHeight) * eased
-                panel.setFrame(NSRect(x: newFrame.minX, y: animationTop - height, width: newFrame.width, height: height),
-                               display: true, animate: false)
-                if progress >= 1 {
-                    timer.invalidate()
-                    self.frameTimer = nil
-                    self.animatedFrame = nil
-                }
-            }
+        guard displayLink == nil else { return }
+        animationFrames = 0
+        largestFrameGap = 0
+        lastFrameTime = CACurrentMediaTime()
+        let link = panel.displayLink(target: self, selector: #selector(advanceAnimation(_:)))
+        let maximum = Float(screen.maximumFramesPerSecond)
+        link.preferredFrameRateRange = CAFrameRateRange(minimum: min(60, maximum), maximum: maximum, preferred: maximum)
+        displayLink = link
+        link.add(to: .main, forMode: .common)
+    }
+
+    @objc private func advanceAnimation(_ link: CADisplayLink) {
+        guard let panel, let destination = animatedFrame else { stopAnimation(); return }
+        let now = link.targetTimestamp
+        let elapsed = max(0, now - (lastFrameTime ?? now))
+        lastFrameTime = now
+        animationFrames += 1
+        largestFrameGap = max(largestFrameGap, elapsed)
+        if NSWorkspace.shared.accessibilityDisplayShouldReduceMotion {
+            motion.snap(expanded: state.expanded)
+        } else {
+            motion.advance(by: elapsed)
         }
-        timer.tolerance = 0.003
-        frameTimer = timer
-        RunLoop.main.add(timer, forMode: .common)
+        let height = 48 + 100 * motion.progress
+        // No independent SwiftUI timing or synchronous redraw on each timer tick.
+        // Both edges come from the same progress, keeping the top on the notch.
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        updateReveal()
+        panel.setFrame(NSRect(x: destination.minX, y: destination.maxY - height,
+                              width: destination.width, height: height), display: false, animate: false)
+        panel.contentView?.layoutSubtreeIfNeeded()
+        CATransaction.commit()
+        if motion.isSettled {
+            if ProcessInfo.processInfo.environment["RECORDER_ISLAND_DIAGNOSTICS"] == "1" {
+                fputs("island-motion frames=\(animationFrames) maxGapMs=\(largestFrameGap * 1000) top=\(panel.frame.maxY) expanded=\(state.expanded)\n", stderr)
+            }
+            stopAnimation()
+        }
+    }
+
+    private func updateReveal() {
+        var transaction = Transaction()
+        transaction.disablesAnimations = true
+        withTransaction(transaction) { state.expansionProgress = motion.progress }
+    }
+
+    private func stopAnimation() {
+        displayLink?.invalidate()
+        displayLink = nil
+        lastFrameTime = nil
+        animatedFrame = nil
     }
 
     private func displayID(_ screen: NSScreen?) -> NSNumber? {
@@ -252,12 +324,7 @@ private final class RecordingIslandHelperController {
         collapseWork = nil
         guard state.expanded != expanded else { return }
         let animate = panel?.isVisible == true && !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
-        if animate {
-            let animation: Animation = expanded ? .easeOut(duration: openingDuration) : .easeInOut(duration: closingDuration)
-            withAnimation(animation) { state.expanded = expanded }
-        } else {
-            state.expanded = expanded
-        }
+        state.expanded = expanded
         positionPanel(animated: animate)
     }
 
@@ -275,13 +342,23 @@ private final class RecordingIslandHelperController {
 
     private func setSessionActive(_ active: Bool) {
         sessionActive = active
-        if active && hasState { showPanel() }
-        else if !active { panel?.orderOut(nil) }
+        if active && hasState { restorePlacement() }
+        else if !active {
+            stopAnimation()
+            placementWork.forEach { $0.cancel() }
+            placementWork.removeAll()
+            panel?.orderOut(nil)
+        }
     }
 
     private func shutdown() {
         collapseWork?.cancel()
-        frameTimer?.invalidate()
+        stopAnimation()
+        placementWork.forEach { $0.cancel() }
+        placementWork.removeAll()
+        if let screenObserver { NotificationCenter.default.removeObserver(screenObserver) }
+        sessionObservers.forEach { NSWorkspace.shared.notificationCenter.removeObserver($0) }
+        sessionObservers.removeAll()
         panel?.orderOut(nil)
         panel?.close()
         NSApp.terminate(nil)
@@ -330,7 +407,8 @@ private final class IslandPanelContentView: NSView {
 
     override func layout() {
         super.layout()
-        hostingView.frame = NSRect(x: 0, y: 0, width: bounds.width, height: 148)
+        let frame = NSRect(x: 0, y: 0, width: bounds.width, height: 148)
+        if hostingView.frame != frame { hostingView.frame = frame }
     }
 
     override func draw(_ dirtyRect: NSRect) {
