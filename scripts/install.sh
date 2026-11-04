@@ -8,7 +8,7 @@ fail() { printf '설치 중단: %s\n' "$*" >&2; exit 1; }
 
 usage() {
     cat <<'HELP'
-Meeting Recorder 0.8.2 설치
+Meeting Recorder 0.8.3 설치
   bash install.sh [옵션]
 
   --install-dir 경로  앱을 넣을 절대 경로 (예: "$HOME/Applications")
@@ -111,8 +111,8 @@ check_existing_app() {
 }
 
 main() {
-    local version=0.8.2 release_commit=231ef4cf9e0c440e2f6a43a9f968ca006c87481f
-    local expected_sha=58000524b4ca0600da19846368c30feac2f7de2613af5dc110f13f48f2d95a9a
+    local version=0.8.3 release_commit=292496573e07ef21040e2ed22f954d7b96dd9d90
+    local expected_sha=a636b01643b61579b94be1da7848d1993d6116d5caffee420eb61b1b5e158bb6
     local install_dir='' archive='' skip_model=0 no_open=0 with_ollama=0 has_ollama_model=0 ollama_model='' major downloaded_sha
     local archive_name="Meeting-Recorder-${version}-macOS-arm64.zip"
     local base_url="https://raw.githubusercontent.com/minnong511/meeting-auto-recoder/${release_commit}/releases"
