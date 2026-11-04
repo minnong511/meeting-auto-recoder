@@ -19,29 +19,52 @@ public struct RecorderRelease: Comparable, Sendable, CustomStringConvertible {
         lhs.parts.lexicographicallyPrecedes(rhs.parts)
     }
 
-    public static let releasesPage = URL(string: "https://github.com/minnong511/meeting-auto-recoder/tree/main/releases")!
-    static let feed = URL(string: "https://raw.githubusercontent.com/minnong511/meeting-auto-recoder/main/releases/SHA256SUMS")!
-
-    // The packaging tool adds a line only when it has produced an installable archive.
-    package static func latest(in text: String) -> Self? {
-        let prefix = "Meeting-Recorder-", suffix = "-macOS-arm64.zip"
-        return text.split(whereSeparator: \.isNewline).compactMap { line -> Self? in
-            let fields = line.split(whereSeparator: \.isWhitespace)
-            guard fields.count == 2, fields[0].utf8.count == 64, fields[0].allSatisfy(\.isHexDigit),
-                  fields[1].hasPrefix(prefix), fields[1].hasSuffix(suffix) else { return nil }
-            return Self(String(fields[1].dropFirst(prefix.count).dropLast(suffix.count)))
-        }.max()
+    public static let releasesPage = URL(string: "https://github.com/minnong511/meeting-auto-recoder/releases/latest")!
+    private static let raw = URL(string: "https://raw.githubusercontent.com/minnong511/meeting-auto-recoder")!
+    public var archiveName: String { "Meeting-Recorder-\(description)-macOS-arm64.zip" }
+    public var releasePage: URL { Self.releasesPage.deletingLastPathComponent().appendingPathComponent("tag/v" + description) }
+    public var downloadURL: URL {
+        Self.releasesPage.deletingLastPathComponent().appendingPathComponent("download/v" + description + "/" + archiveName)
     }
 
-    public static func fetchLatest() async throws -> Self {
-        var request = URLRequest(url: feed, cachePolicy: .reloadIgnoringLocalCacheData, timeoutInterval: 12)
+    package static func published(at url: URL) -> Self? {
+        let tag = url.lastPathComponent
+        guard url.scheme == "https", url.host == "github.com", tag.hasPrefix("v"),
+              url.deletingLastPathComponent().path == "/minnong511/meeting-auto-recoder/releases/tag" else { return nil }
+        return Self(String(tag.dropFirst()))
+    }
+
+    package func checksum(in text: String) -> String? {
+        let rows = text.split(whereSeparator: \.isNewline).map { $0.split(whereSeparator: \.isWhitespace) }
+            .filter { $0.count == 2 && $0[1] == archiveName }
+        guard rows.count == 1, let digest = rows.first?.first, digest.utf8.count == 64,
+              digest.utf8.allSatisfy({ (48...57).contains($0) || (65...70).contains($0) || (97...102).contains($0) }) else { return nil }
+        return digest.lowercased()
+    }
+
+    private static func index(ref: String) async throws -> String {
+        let url = raw.appendingPathComponent(ref + "/releases/SHA256SUMS")
+        var request = URLRequest(url: url, cachePolicy: .reloadIgnoringLocalCacheData, timeoutInterval: 15)
         request.setValue("text/plain", forHTTPHeaderField: "Accept")
         let (data, response) = try await URLSession.shared.data(for: request)
         guard let http = response as? HTTPURLResponse, http.statusCode == 200, data.count <= 65_536,
-              let text = String(data: data, encoding: .utf8), let release = latest(in: text) else {
-            throw URLError(.cannotParseResponse)
-        }
+              let text = String(data: data, encoding: .utf8) else { throw URLError(.cannotParseResponse) }
+        return text
+    }
+
+    public static func fetchLatest() async throws -> Self {
+        // The public Latest redirect excludes drafts and prereleases without an API key.
+        var request = URLRequest(url: releasesPage, cachePolicy: .reloadIgnoringLocalCacheData, timeoutInterval: 15)
+        request.httpMethod = "HEAD"
+        let (_, response) = try await URLSession.shared.data(for: request)
+        guard let http = response as? HTTPURLResponse, http.statusCode == 200,
+              let url = http.url, let release = published(at: url) else { throw URLError(.cannotParseResponse) }
         return release
+    }
+
+    package func fetchChecksum() async throws -> String {
+        guard let digest = checksum(in: try await Self.index(ref: "v" + description)) else { throw URLError(.cannotParseResponse) }
+        return digest
     }
 }
 

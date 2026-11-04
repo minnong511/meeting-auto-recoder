@@ -1,13 +1,13 @@
 # Meeting Recorder 설치 방법
 
-**0.8.1** (빌드 19)은 2026년 11월 4일 공개한 Apple Silicon용 정식 배포본입니다. [릴리스 노트](https://github.com/minnong511/meeting-auto-recoder/releases/tag/v0.8.1) · [ZIP 다운로드](https://github.com/minnong511/meeting-auto-recoder/releases/download/v0.8.1/Meeting-Recorder-0.8.1-macOS-arm64.zip)
+**0.8.2** (빌드 21)은 2026년 11월 4일 공개한 Apple Silicon용 정식 배포본입니다. [릴리스 노트](https://github.com/minnong511/meeting-auto-recoder/releases/tag/v0.8.2) · [ZIP 다운로드](https://github.com/minnong511/meeting-auto-recoder/releases/download/v0.8.2/Meeting-Recorder-0.8.2-macOS-arm64.zip)
 
 ## 준비 사항
 
 - Apple Silicon Mac(M1 이후)
 - macOS 26 이상
 - 첫 STT 모델 다운로드를 위한 인터넷 연결
-- 0.8.1에서는 메모리 16GB 이상 Mac의 기본 GPU 모델에 약 3.10GB, 그보다 작은 Mac의 기본 Core ML 모델에 약 948MB가 필요합니다. 토크나이저·캐시·녹음 파일을 위한 공간이 추가로 필요합니다.
+- 0.8.2에서는 메모리 16GB 이상 Mac의 기본 GPU 모델에 약 3.10GB, 그보다 작은 Mac의 기본 Core ML 모델에 약 948MB가 필요합니다. 토크나이저·캐시·녹음 파일을 위한 공간이 추가로 필요합니다.
 
 이 배포본에는 앱과 MCP 서버가 들어 있습니다. Xcode, Python, Qwen 또는 Cohere 모델 설치는 필요하지 않습니다. Intel Mac용 실행 파일은 포함하지 않습니다.
 
@@ -21,7 +21,7 @@
 curl -fsSL --proto '=https' --proto-redir '=https' https://raw.githubusercontent.com/minnong511/meeting-auto-recoder/main/scripts/install.sh | /bin/bash
 ```
 
-1. 고정된 배포 커밋의 0.8.1 ZIP을 내려받고 설치 스크립트에 기록된 SHA-256과 비교합니다.
+1. 고정된 배포 커밋의 0.8.2 ZIP을 내려받고 설치 스크립트에 기록된 SHA-256과 비교합니다.
 2. 앱과 MCP 서버의 서명을 검사한 뒤 설치합니다. 기존 `/Applications` 또는 `~/Applications`의 앱을 먼저 찾습니다. 두 위치에 모두 있으면 설치 폴더를 직접 선택해야 합니다. 새 설치는 쓰기 가능한 `/Applications`를 우선 사용하고, 권한이 없으면 `~/Applications`를 사용합니다.
 3. Mac 메모리에 맞는 권장 Whisper 모델과 필요한 음성 인식 파일을 준비합니다. 설치된 모델 캐시가 있으면 재사용합니다. 네트워크 속도에 따라 첫 준비에 수 분이 걸릴 수 있습니다.
 4. 앱을 엽니다. 저장 폴더 선택과 macOS의 실행 승인·시스템 오디오·마이크 권한 허용은 직접 진행합니다. 회의 요약을 사용하려면 아래 ‘LLM에서 요약하기’를 따릅니다.
@@ -44,12 +44,12 @@ curl -fsSL --proto '=https' --proto-redir '=https' https://raw.githubusercontent
 
 ```sh
 bash scripts/install.sh --help
-bash scripts/install.sh --archive releases/Meeting-Recorder-0.8.1-macOS-arm64.zip
+bash scripts/install.sh --archive releases/Meeting-Recorder-0.8.2-macOS-arm64.zip
 ```
 
 녹음 후 로컬 모델로 문장을 다듬으려면 `--with-ollama`를 추가해 Ollama를 설치할 수 있습니다. 모델까지 내려받으려면 `--ollama-model 모델이름`도 함께 지정하세요.
 
-이 명령은 현재 사용자 계정에 설치합니다. 녹음 파일과 기존 설정은 유지하며, 실행 중인 앱의 교체와 다른 서명의 앱으로 업데이트하는 작업은 거부합니다. 이전 앱은 설치 폴더 안의 숨김 폴더 `.meeting-recorder-backups/`에 보관해 실행 중인 MCP 연결의 파일을 유지합니다. 이전 버전에 연결된 LLM 앱을 모두 종료한 뒤 더 이상 필요 없는 백업을 지울 수 있습니다. 개발용 체크아웃의 앱 업데이트는 [개발자 가이드](https://github.com/minnong511/meeting-auto-recoder/blob/v0.8.1/docs/BUILDING.md)의 `scripts/build-app.sh`를 사용하세요.
+이 명령은 현재 사용자 계정에 설치합니다. 녹음 파일과 기존 설정은 유지하며, 실행 중인 앱의 교체와 다른 서명의 앱으로 업데이트하는 작업은 거부합니다. 이전 앱은 설치 폴더 안의 숨김 폴더 `.meeting-recorder-backups/`에 보관해 실행 중인 MCP 연결의 파일을 유지합니다. 이전 버전에 연결된 LLM 앱을 모두 종료한 뒤 더 이상 필요 없는 백업을 지울 수 있습니다. 개발용 체크아웃의 앱 업데이트는 [개발자 가이드](https://github.com/minnong511/meeting-auto-recoder/blob/v0.8.2/docs/BUILDING.md)의 `scripts/build-app.sh`를 사용하세요.
 
 ## 1. ZIP으로 직접 설치
 
@@ -104,22 +104,22 @@ bash scripts/install.sh --archive releases/Meeting-Recorder-0.8.1-macOS-arm64.zi
 
 1. 사용할 Codex 또는 Claude Code 실행기를 설치하고 본인 계정에 로그인합니다.
 2. **설정 및 연결 → 연결 → 자동 요약**에서 에이전트를 선택합니다. **요약 프롬프트**에 원하는 형식이나 문체를 입력하면 다음 요청부터 적용됩니다.
-3. 저장을 마친 회의에서 **Codex로 요약** 또는 **Claude Code로 요약**을 누릅니다. 해당 회의의 대화록이 선택한 서비스로 전달되고 결과가 **회의 요약** 탭에 저장됩니다.
+3. 회의 화면에서 요약 버튼 옆 **모델**로 사용할 모델을 고릅니다. 선택은 Codex와 Claude Code별로 기억합니다. **Codex로 요약** 또는 **Claude Code로 요약**을 누릅니다. 해당 회의의 대화록이 선택한 서비스로 전달되고 결과가 **회의 요약** 탭에 저장됩니다.
 
 다른 MCP 클라이언트에서는 **설정 및 연결 → 연결 → MCP 연결 설정 복사**로 서버를 등록하고 회의의 **요약 요청 복사**를 사용하세요. **연결 세부정보**에서 연결된 앱과 세션을 확인할 수 있습니다.
 
 ## 5. 업데이트와 삭제
 
-업데이트 전 녹음을 마치고 앱을 종료한 뒤 새 앱으로 교체하세요. 같은 배포자의 동일한 서명과 설치 경로를 유지하는 것이 좋습니다. 서명 주체나 경로가 바뀌면 macOS가 녹음 권한을 다시 요청할 수 있습니다.
+**0.8.2 이상**에서는 **설정 및 연결 → 일반 → 업데이트 → 지금 확인**에서 GitHub의 새 정식 버전을 확인하세요. **설치하고 다시 열기**를 누르면 선택한 버전의 ZIP과 체크섬을 내려받습니다. 기존 앱과 같은 서명인지 검증한 뒤 이전 앱을 설치 폴더의 `.meeting-recorder-backups/`에 보관하고 새 버전을 다시 엽니다. 확인만 눌렀을 때는 설치하지 않습니다.
 
-설치 프로그램이 서명 불일치를 알리면 기존 앱을 임의로 삭제하거나 다시 서명하지 말고 배포자에게 호환되는 업데이트를 요청하세요. 기존 앱과 녹음 파일은 유지됩니다.
+녹음·저장·요약이 진행 중이면 작업을 마친 뒤 설치하세요. 다운로드나 서명 검사가 실패하면 기존 앱으로 계속 사용할 수 있습니다. 앱을 쓰기 가능한 응용 프로그램 폴더에 두어야 합니다.
 
-공식 0.8.0에서 0.8.1로 업데이트하려면 녹음을 마치고 앱을 종료한 뒤 같은 설치 명령을 실행하세요. 설치 프로그램이 기존 앱과 새 앱의 서명을 양방향으로 검사하고 이전 앱을 백업합니다. 설치가 중단돼 잠금 오류가 남으면 실행 중인 설치가 없는지 먼저 확인하세요.
+**0.8.0·0.8.1에서 이번 버전으로 올릴 때**는 녹음을 마치고 앱을 종료한 뒤 위의 설치 명령을 실행하거나 0.8.2 ZIP으로 교체하세요. 0.8.1의 **지금 확인**은 업데이트를 알려주고 다운로드 페이지로 안내합니다.
 
 앱을 삭제해도 별도로 선택한 녹음 저장 폴더는 남습니다. 앱 안에서 회의를 삭제하면 관련 파일은 Finder 휴지통으로 이동하므로 복구할 수 있습니다.
 
 ## 배포 상태
 
-GitHub의 정식 버전 0.8.1은 로컬 개발 서명으로 배포되며 Apple 공증은 받지 않았습니다. [공식 배포 페이지](https://github.com/minnong511/meeting-auto-recoder/releases/tag/v0.8.1)
+GitHub의 정식 버전 0.8.2은 로컬 개발 서명으로 배포되며 Apple 공증은 받지 않았습니다. [공식 배포 페이지](https://github.com/minnong511/meeting-auto-recoder/releases/tag/v0.8.2)
 
 [Apple Developer ID 안내](https://developer.apple.com/developer-id/)

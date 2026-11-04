@@ -81,11 +81,18 @@ extension RecorderChecks {
         invalid  Meeting-Recorder-9.0.0-macOS-arm64.zip
         """
         let release = RecorderRelease("0.10.0")!, newer = RecorderRelease("1.0.0")!
-        try expect(RecorderRelease.latest(in: feed) == release && RecorderRelease.latest(in: "no archive") == nil, "공개 ZIP 선택 또는 숫자 버전 비교 실패")
+        try expect(RecorderRelease.published(at: release.releasePage) == release && release > RecorderRelease("0.9.9")! &&
+                   RecorderRelease.published(at: URL(string: "https://github.com/minnong511/meeting-auto-recoder/releases/tag/v0.11.0-beta")!) == nil &&
+                   RecorderRelease.published(at: URL(string: "https://github.com/other/repo/releases/tag/v0.11.0")!) == nil,
+                   "GitHub 정식 태그 또는 버전 비교가 올바르지 않음")
         let domain = "RecorderUpdatesTest.\(UUID())"
         let prefs = UserDefaults(suiteName: domain)!
         defer { prefs.removePersistentDomain(forName: domain) }
         var time = Date(timeIntervalSince1970: 100_000), next = release
+        try expect(release.checksum(in: feed) == hash.lowercased() && release.checksum(in: feed + "\n" + feed) == nil,
+                   "버전 해시 불일치 또는 중복 배포 항목 허용")
+        try expect(release.downloadURL.absoluteString == "https://github.com/minnong511/meeting-auto-recoder/releases/download/v0.10.0/Meeting-Recorder-0.10.0-macOS-arm64.zip",
+                   "다운로드가 선택한 정식 버전에 고정되지 않음")
         var requests = 0, alerts: [RecorderRelease] = []
         var offline = false
         let monitor = RecorderUpdates(installedVersion: "0.9.9", defaults: prefs, now: { time }, fetch: {

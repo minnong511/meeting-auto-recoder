@@ -59,6 +59,9 @@ def sign(staged, target):
     config = configuration()
     options = ["--force", "--sign", config["identity"], "--keychain", config["keychain"], "--timestamp=none", "--options", "runtime"]
     run("/usr/bin/codesign", *options, "--identifier", "dev.meetingrecorder.prototype.mcp", str(staged / "Contents/MacOS/MeetingRecorderMCP"))
+    updater = staged / "Contents/MacOS/MeetingRecorderUpdater"
+    if updater.is_file():
+        run("/usr/bin/codesign", *options, "--identifier", "dev.meetingrecorder.prototype.updater", str(updater))
     root = Path(__file__).resolve().parent.parent
     run("/usr/bin/codesign", *options, "--entitlements", str(root / "Resources/Entitlements.plist"), str(staged))
     run("/usr/bin/codesign", "--verify", "--deep", "--strict", str(staged))

@@ -60,7 +60,10 @@ def verify(archive):
         if hashlib.sha256(manifest).hexdigest() != metadata["source_manifest_sha256"]:
             raise ValueError("소스 파일 해시 목록이 변경되었습니다.")
         subprocess.run(["/usr/bin/codesign", "--verify", "--deep", "--strict", str(app)], check=True)
-        for name in ("MeetingRecorder", "MeetingRecorderMCP"):
+        programs = ["MeetingRecorder", "MeetingRecorderMCP"]
+        if tuple(map(int, metadata["version"].split("-", 1)[0].split("."))) >= (0, 8, 2):
+            programs.append("MeetingRecorderUpdater")
+        for name in programs:
             executable = app / "Contents/MacOS" / name
             if not os.access(executable, os.X_OK):
                 raise ValueError("실행 권한이 보존되지 않았습니다: " + name)
@@ -75,7 +78,7 @@ def verify(archive):
         report = dict(version=metadata["version"], sha256=digest,
                       extracted_bytes=sum(item.file_size for item in entries),
                       notarized_and_stapled=metadata["notarized_and_stapled"],
-                      verified=["archive hash", "allowlisted contents", "source manifest", "app and MCP signatures", "arm64", "executable permissions", "extracted live-only startup"])
+                      verified=["archive hash", "allowlisted contents", "source manifest", "app and bundled executable signatures", "arm64", "executable permissions", "extracted live-only startup"])
         print(json.dumps(report, ensure_ascii=False, indent=2))
 
 

@@ -72,7 +72,9 @@ final class RecorderModel: ObservableObject {
     private var recordingLimit: Double?
     private var warnedSources = Set<AudioSource>()
     private var speakerTask: Task<Meeting, Error>?
-    private var isQuitting = false
+    var isQuitting = false
+    @Published var isInstallingUpdate = false
+    @Published var updateInstallError: String?
     private let appMonitor = MeetingAppMonitor()
     private lazy var appNotifications = MeetingAppNotifications()
     private var detectionState = MeetingDetectionState()
@@ -97,6 +99,11 @@ final class RecorderModel: ObservableObject {
 
     init(pasteboard: NSPasteboard = .general) {
         self.pasteboard = pasteboard
+        if let error = UserDefaults.standard.string(forKey: "lastUpdateInstallError") {
+            updateInstallError = error
+            UserDefaults.standard.removeObject(forKey: "lastUpdateInstallError")
+            showsSettings = true
+        }
         refreshSummaryExecutables()
         refreshMCPConnections()
         excludesNotificationSounds = UserDefaults.standard.object(forKey: "excludesNotificationSounds") as? Bool ?? true
@@ -139,7 +146,9 @@ final class RecorderModel: ObservableObject {
         }
         appNotifications.onOpenRelease = { [weak self] version in
             guard let self, self.updates.enabled, self.updates.available?.description == version else { return }
-            NSWorkspace.shared.open(RecorderRelease.releasesPage)
+            self.showUpdateSettings()
+            NSApp.activate(ignoringOtherApps: true)
+            NSApp.windows.first { $0.canBecomeMain }?.makeKeyAndOrderFront(nil)
         }
         updates.onNewRelease = { [weak self] release in
             guard let self, !self.isBusy, !NSApp.isActive else { return }

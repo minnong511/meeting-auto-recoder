@@ -41,7 +41,7 @@ open 'dist/Meeting Recorder.app'
 ```
 
 - 인증서가 없으면 임시 서명으로 대체하지 않고 중단합니다.
-- 앱과 MCP 실행 파일을 같은 인증서로 서명합니다.
+- 앱, MCP 서버, 앱 내 업데이트 실행 파일을 같은 인증서로 서명합니다.
 - 새 앱은 별도 폴더에서 완성하고 서명을 검증합니다. 인증서와 앱 식별자에 기반한 기존·신규 서명 조건이 서로 호환되어야 업데이트를 허용합니다.
 - 실행 중인 앱의 교체는 차단합니다. 교체 직전 앱은 `.build/app-backups/`에 보관하고 설치 실패 시 되돌립니다. 기존 MCP 프로세스는 이전 실행 파일을 계속 사용할 수 있습니다.
 - 앱을 수동으로 다시 서명하거나 인증서를 매번 새로 만들지 마세요. 앱 식별자만 검사하는 느슨한 서명 조건도 사용하지 않습니다.
@@ -64,8 +64,9 @@ python3 scripts/check-signing.py
 bash scripts/build-app.sh
 .build/release/RecorderChecks
 python3 scripts/check-signing.py
+python3 scripts/check-app-update.py
 python3 scripts/package-release.py
-python3 scripts/check-release.py releases/Meeting-Recorder-0.8.1-macOS-arm64.zip
+python3 scripts/check-release.py releases/Meeting-Recorder-0.8.2-macOS-arm64.zip
 ```
 
 `package-release.py`는 이미 빌드한 앱을 검증하고 ZIP으로 묶습니다. 앱을 다시 서명하거나 설치하지 않습니다. `check-release.py`는 ZIP을 별도 임시 폴더에 풀어 파일 목록·SHA-256·실행 권한·앱/MCP 서명과 시작 진단을 확인합니다. 새로운 Mac의 시스템 오디오 권한과 실제 녹음까지 검증하는 절차는 아니므로 대상 Mac에서도 테스트해야 합니다.

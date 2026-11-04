@@ -53,7 +53,7 @@ struct ContentView: View {
             GeometryReader { geometry in
             VStack(spacing: 0) {
                 if showsRecordingControls, let suggestion = model.meetingSuggestion { meetingAppBanner(suggestion) }
-                if !model.isBusy { ReleaseBanner(updates: model.updates) }
+                if !model.isBusy { ReleaseBanner(updates: model.updates, model: model) }
                 if showsRecordingControls { recordingControls }
                 else if model.isPolishing {
                     HStack { ProgressView().controlSize(.small); Text(model.polishProgress).font(.caption); Spacer() }

@@ -30,7 +30,10 @@ def main():
     if not re.fullmatch(r"\d+\.\d+\.\d+(?:-[A-Za-z0-9.-]+)?", version):
         raise RuntimeError("배포 버전 형식이 올바르지 않습니다.")
     run("/usr/bin/codesign", "--verify", "--deep", "--strict", str(app))
-    executables = [app / "Contents/MacOS" / name for name in ("MeetingRecorder", "MeetingRecorderMCP")]
+    programs = ["MeetingRecorder", "MeetingRecorderMCP"]
+    if tuple(map(int, version.split("-", 1)[0].split("."))) >= (0, 8, 2):
+        programs.append("MeetingRecorderUpdater")
+    executables = [app / "Contents/MacOS" / name for name in programs]
     for executable in executables:
         run("/usr/bin/codesign", "--verify", "--strict", str(executable))
         if run("/usr/bin/lipo", "-archs", str(executable)).stdout.strip() != "arm64":

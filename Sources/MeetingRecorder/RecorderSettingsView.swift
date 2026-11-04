@@ -102,7 +102,7 @@ struct RecorderSettingsView: View {
                 Button("저장 폴더 선택…", action: model.chooseFolder).disabled(model.isBusy)
             }
         }
-        ReleaseSettings(updates: model.updates, toggle: model.setUpdateNotifications)
+        ReleaseSettings(updates: model.updates, model: model)
         Section("녹음") {
             Toggle("녹음에서 알림음 제외", isOn: Binding(get: { model.excludesNotificationSounds }, set: model.setExcludesNotificationSounds))
                 .disabled(model.isBusy)
@@ -227,9 +227,10 @@ struct RecorderSettingsView: View {
 
 private struct ReleaseSettings: View {
     @ObservedObject var updates: RecorderUpdates
-    var toggle: (Bool) -> Void
+    @ObservedObject var model: RecorderModel
 
     private var status: String {
+        if model.isInstallingUpdate { return "다운로드 및 서명 확인 중…" }
         if updates.isChecking { return "확인 중…" }
         if updates.failed { return "공개 버전을 확인하지 못했습니다." }
         if let next = updates.available { return "새 버전 \(next.description)" }
@@ -245,10 +246,24 @@ private struct ReleaseSettings: View {
                     Text(status).font(.caption).foregroundStyle(.secondary).accessibilityIdentifier("update-check-status")
                 }
                 Spacer()
-                if updates.available != nil { Link("배포본 보기", destination: RecorderRelease.releasesPage) }
-                Button("지금 확인") { Task { await updates.check(manual: true) } }.disabled(updates.isChecking)
+                if let release = updates.available {
+                    Button("설치하고 다시 열기") { model.installUpdate(release) }
+                        .disabled(!model.canInstallUpdate)
+                        .accessibilityIdentifier("install-release")
+                }
+                Button("지금 확인") { Task { await updates.check(manual: true) } }.disabled(updates.isChecking || model.isInstallingUpdate)
             }
-            Toggle("새 버전 알림", isOn: Binding(get: { updates.enabled }, set: toggle))
+            if let error = model.updateInstallError {
+                Label(error, systemImage: "exclamationmark.circle").font(.caption).foregroundStyle(.orange)
+            }
+            if let release = updates.available {
+                HStack {
+                    if !model.canInstallUpdate && !model.isInstallingUpdate { Text("진행 중인 작업을 마치면 설치할 수 있습니다.") }
+                    Spacer()
+                    Link("릴리스 노트", destination: release.releasePage)
+                }.font(.caption)
+            }
+            Toggle("새 버전 알림", isOn: Binding(get: { updates.enabled }, set: model.setUpdateNotifications))
                 .help("공개된 새 앱 버전을 하루 한 번 확인합니다.")
         }
     }
@@ -256,13 +271,15 @@ private struct ReleaseSettings: View {
 
 struct ReleaseBanner: View {
     @ObservedObject var updates: RecorderUpdates
+    @ObservedObject var model: RecorderModel
     var body: some View {
         if let release = updates.banner {
             HStack(spacing: 10) {
                 Image(systemName: "arrow.down.circle").foregroundStyle(RecorderTheme.accent)
                 Text("새 버전 \(release.description)").font(.callout.weight(.semibold))
                 Spacer()
-                Link("배포본 보기", destination: RecorderRelease.releasesPage)
+                Button(model.isInstallingUpdate ? "설치 준비 중…" : "설치하고 다시 열기") { model.installUpdate(release) }
+                    .disabled(!model.canInstallUpdate)
                 Button { updates.dismiss(release) } label: { Image(systemName: "xmark") }
                     .buttonStyle(.borderless).accessibilityLabel("이번 버전 알림 닫기")
                     .help("이번 버전 알림 닫기")
