@@ -8,7 +8,7 @@ fail() { printf '설치 중단: %s\n' "$*" >&2; exit 1; }
 
 usage() {
     cat <<'HELP'
-Meeting Recorder 0.8.0 설치
+Meeting Recorder 0.8.1 설치
   bash install.sh [옵션]
 
   --install-dir 경로  앱을 넣을 절대 경로 (예: "$HOME/Applications")
@@ -21,8 +21,8 @@ Meeting Recorder 0.8.0 설치
 
 기존 /Applications 또는 ~/Applications의 앱 위치를 우선 사용합니다.
 새 설치는 /Applications에 쓰기 가능하면 그곳에, 아니면 ~/Applications에 합니다.
-앱·MCP 서버 설치와 Whisper 모델 준비를 수행합니다. 실행 승인, 녹음 권한,
-저장 폴더 선택, LLM 앱의 MCP 연결은 사용자가 직접 설정해야 합니다.
+앱·MCP 서버를 설치하고 권장 Whisper 모델을 준비합니다. 녹음 권한과 저장 폴더는
+앱에서 확인하세요. 회의를 요약할 때는 연결 설정에서 Codex 또는 Claude Code를 선택하세요.
 배포본 설치에는 개인 서명 인증서나 개발자 계정이 필요하지 않습니다.
 HELP
 }
@@ -111,8 +111,8 @@ check_existing_app() {
 }
 
 main() {
-    local version=0.8.0 release_commit=94233cc3912e23300510dc8242d0333955fab596
-    local expected_sha=058a832ba9e7f8d30bb5163dd108fc1a2c75411f36de6511369c077256b3cac1
+    local version=0.8.1 release_commit=0f2c23fa2c93d096a26141b4c1a3d7fdf3e973fe
+    local expected_sha=9a4613febba9658b8a668ceab10fc6a66ad8ab56c5d50e66331c346f93eaae26
     local install_dir='' archive='' skip_model=0 no_open=0 with_ollama=0 has_ollama_model=0 ollama_model='' major downloaded_sha
     local archive_name="Meeting-Recorder-${version}-macOS-arm64.zip"
     local base_url="https://raw.githubusercontent.com/minnong511/meeting-auto-recoder/${release_commit}/releases"
@@ -198,7 +198,7 @@ main() {
     printf '현재 배포본은 Apple 공증을 받지 않았습니다. macOS가 차단하면 신뢰하는 출처인지 확인한 뒤 시스템 설정에서 앱별 실행을 승인하세요.\n'
 
     if [ "$skip_model" = 0 ]; then
-        printf '[3/4] Whisper 음성인식 모델 준비 (첫 실행 약 627MB + 추가 캐시, 수 분 소요 가능)\n'
+        printf '[3/4] 권장 Whisper 모델 준비 (메모리 16GB 이상 약 3.10GB, 그 미만 약 948MB + 추가 캐시)\n'
         if ! "$target_app/Contents/MacOS/MeetingRecorder" --prepare-speech; then
             printf '앱 설치는 완료했으나 모델 준비에 실패했습니다. 인터넷 연결과 macOS 실행 승인을 확인한 뒤 설치 명령을 다시 실행하거나 첫 녹음 때 재시도하세요.\n' >&2
             exit 2
@@ -213,7 +213,7 @@ main() {
     else
         printf '[4/4] 앱 실행 생략\n'
     fi
-    printf '설치 완료. 앱에서 저장 폴더를 선택하고 macOS 녹음 권한을 허용하세요. LLM 요약은 앱의 MCP 연결 설정을 복사해 별도로 연결하세요.\n'
+    printf '설치 완료. 앱에서 저장 폴더와 macOS 녹음 권한을 확인하세요. 회의를 요약하려면 설정 및 연결 → 연결에서 Codex 또는 Claude Code를 선택하세요.\n'
 }
 
 # The entry point is last so a truncated download cannot start installation.
