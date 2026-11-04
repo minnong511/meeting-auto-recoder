@@ -51,6 +51,8 @@ enum Checks {
             ("UTF-8 Markdown·메타데이터 왕복", { try suite.roundTrip() }),
             ("무음·기호 필터와 실제 짧은 발언 보존", { try suite.transcriptCleanup() }),
             ("발언 시간순 대화록·교대 화자·고유 구간", { try suite.speakerDocument() }),
+            ("회의 문서 복사·부분 정리본·실제 파일 경로", { try suite.meetingCopyActions() }),
+            ("정식 버전 알림·중복 제한·수동 확인·오프라인", { try await suite.releaseAlerts() }),
             ("문단 재생 시각·화자 교대·원문 보존", { try suite.playbackParagraphs() }),
             ("문장 정리 원문 보존·이어하기·외부 수정 보호", { try suite.polishedTranscriptPersistence() }),
             ("날짜별 회의 목록 경계", { try suite.meetingDateGroups() }),

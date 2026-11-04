@@ -5,6 +5,11 @@ public struct StoredMeeting: Identifiable, Sendable {
     public var meeting: Meeting
     public var directory: URL
     public var id: UUID { meeting.id }
+    public var audioURL: URL? {
+        guard let name = meeting.audioFile, !name.isEmpty, name != ".", name != "..",
+              !name.contains("/"), !name.contains("\\"), !name.contains("\0") else { return nil }
+        return directory.appendingPathComponent(name)
+    }
     public init(meeting: Meeting, directory: URL) { self.meeting = meeting; self.directory = directory }
 }
 

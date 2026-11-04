@@ -5,6 +5,9 @@ import RecorderCore
 @MainActor
 final class MeetingAppNotifications: NSObject, UNUserNotificationCenterDelegate {
     var onOpen: ((String) -> Void)?
+    var onOpenRelease: ((String) -> Void)?
+    private static let updateID = "recorder-public-release"
+    private var updatesEnabled = true
     var onStatus: ((String) -> Void)?
     private let center = UNUserNotificationCenter.current()
     private var enabled = true
@@ -23,15 +26,26 @@ final class MeetingAppNotifications: NSObject, UNUserNotificationCenterDelegate 
         }
     }
 
-    func configure(enabled: Bool, request: Bool = true) async {
+    func configure(enabled: Bool, updatesEnabled: Bool, request: Bool = true) async {
         self.enabled = enabled
+        self.updatesEnabled = updatesEnabled
         center.delegate = self
         if !enabled {
-            configured = true
             pending = nil
-            center.removeAllPendingNotificationRequests()
-            center.removeAllDeliveredNotifications()
-            onStatus?("macOS 알림 꺼짐")
+            let delivered = await center.deliveredNotifications()
+            let queued = await center.pendingNotificationRequests()
+            if !self.enabled {
+                center.removeDeliveredNotifications(withIdentifiers: delivered.map(\.request.identifier).filter { $0.hasPrefix("meeting-app-") })
+                center.removePendingNotificationRequests(withIdentifiers: queued.map(\.identifier).filter { $0.hasPrefix("meeting-app-") })
+            }
+        }
+        if !self.updatesEnabled {
+            center.removePendingNotificationRequests(withIdentifiers: [Self.updateID])
+            center.removeDeliveredNotifications(withIdentifiers: [Self.updateID])
+        }
+        if !self.enabled && !self.updatesEnabled {
+            configured = true
+            onStatus?("알림 꺼짐")
             return
         }
         guard !requesting else { return }
@@ -44,7 +58,7 @@ final class MeetingAppNotifications: NSObject, UNUserNotificationCenterDelegate 
             settings = await center.notificationSettings()
         }
         allowed = settings.authorizationStatus == .authorized || settings.authorizationStatus == .provisional
-        if self.enabled {
+        if self.enabled || self.updatesEnabled {
             onStatus?(allowed ? "macOS 알림 허용됨" : "macOS 알림은 시스템 설정에서 허용해 주세요")
             await flush()
         }
@@ -60,8 +74,20 @@ final class MeetingAppNotifications: NSObject, UNUserNotificationCenterDelegate 
     func refreshAuthorization() async {
         // Do not let an initial passive activation check suppress the first
         // explicit permission request, and never show a permission prompt here.
-        guard configured, enabled, !requesting else { return }
-        await configure(enabled: enabled, request: false)
+        guard configured, enabled || updatesEnabled, !requesting else { return }
+        await configure(enabled: enabled, updatesEnabled: updatesEnabled, request: false)
+    }
+
+    func postUpdate(_ release: RecorderRelease) async {
+        let settings = await center.notificationSettings()
+        guard updatesEnabled, settings.authorizationStatus == .authorized || settings.authorizationStatus == .provisional else { return }
+        let content = UNMutableNotificationContent()
+        content.title = "Meeting Recorder 업데이트"
+        content.body = "새 버전 \(release.description)이 공개되었습니다."
+        content.userInfo = ["releaseVersion": release.description]
+        let request = UNNotificationRequest(identifier: Self.updateID, content: content, trigger: nil)
+        // The same update remains available in the app when macOS delivery is unavailable.
+        try? await center.add(request)
     }
 
     private func flush() async {
@@ -87,14 +113,21 @@ final class MeetingAppNotifications: NSObject, UNUserNotificationCenterDelegate 
 
     nonisolated func userNotificationCenter(_ center: UNUserNotificationCenter, willPresent notification: UNNotification,
                                             withCompletionHandler completionHandler: @escaping (UNNotificationPresentationOptions) -> Void) {
-        Task { @MainActor [weak self] in completionHandler(self?.enabled == true ? [.banner, .list] : []) }
+        let isUpdate = notification.request.content.userInfo["releaseVersion"] != nil
+        Task { @MainActor [weak self] in
+            // Foreground updates have their own in-app banner.
+            completionHandler(!isUpdate && self?.enabled == true ? [.banner, .list] : [])
+        }
     }
 
     nonisolated func userNotificationCenter(_ center: UNUserNotificationCenter, didReceive response: UNNotificationResponse,
                                             withCompletionHandler completionHandler: @escaping () -> Void) {
-        let bundleID = response.notification.request.content.userInfo["bundleID"] as? String
+        let info = response.notification.request.content.userInfo
+        let bundleID = info["bundleID"] as? String
+        let release = info["releaseVersion"] as? String
         Task { @MainActor [weak self] in
-            if let bundleID { self?.onOpen?(bundleID) }
+            if let release, self?.updatesEnabled == true { self?.onOpenRelease?(release) }
+            else if let bundleID, self?.enabled == true { self?.onOpen?(bundleID) }
             completionHandler()
         }
     }

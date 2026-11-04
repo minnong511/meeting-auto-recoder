@@ -23,8 +23,7 @@ final class RecordingPlayer: ObservableObject {
     func prepare(_ stored: StoredMeeting) -> Bool {
         if meetingID == stored.id, player != nil { return true }
         reset()
-        let url = stored.directory.appendingPathComponent("audio.m4a")
-        guard FileManager.default.fileExists(atPath: url.path) else {
+        guard let url = stored.audioURL, FileManager.default.fileExists(atPath: url.path) else {
             errorMessage = "녹음 파일을 찾을 수 없습니다. 파일 위치를 확인해 주세요."
             return false
         }

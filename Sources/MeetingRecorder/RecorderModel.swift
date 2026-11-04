@@ -20,9 +20,13 @@ final class RecorderModel: ObservableObject {
     @Published var pendingTranscript = PendingTranscript()
     @Published var latestConfirmed: [AudioSource: TranscriptSegment] = [:]
     @Published var transcriptRevision = 0
-    @Published private(set) var summaryRevision = 0
+    @Published private(set) var summaryText: String?
+    @Published var showsSettings = false
+    @Published var settingsPage = RecorderSettingsPage.general
+    let updates = RecorderUpdates(installedVersion: Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "")
     @Published private(set) var polished = PolishedTranscript()
     @Published private(set) var polishedMeetingID: UUID?
+    private(set) var hasPolishedText = false
     @Published private(set) var isPolishing = false
     @Published private(set) var polishProgress = ""
     @Published private(set) var localModels: [LocalTranscriptPolisher.Model] = []
@@ -34,8 +38,10 @@ final class RecorderModel: ObservableObject {
     @Published private(set) var mcpPresenceAvailable = true
     @Published private(set) var isCheckingMCP = false
     @Published private(set) var mcpDiagnostic: MCPDiagnosticResult?
+    private let pasteboard: NSPasteboard
     private var copyNoticeTask: Task<Void, Never>?
     private var summaryStamp: Date?
+    private var summaryFile: URL?
     @Published private(set) var microphoneFanSuppression = false
     @Published private(set) var microphoneEnabled = true
     @Published private(set) var isUpdatingMicrophone = false
@@ -80,7 +86,8 @@ final class RecorderModel: ObservableObject {
         !isBusy && stored.meeting.status != .recording && stored.meeting.status != .finalizing
     }
 
-    init() {
+    init(pasteboard: NSPasteboard = .general) {
+        self.pasteboard = pasteboard
         if UserDefaults.standard.object(forKey: "recordingIslandEnabled") != nil {
             recordingIslandEnabled = UserDefaults.standard.bool(forKey: "recordingIslandEnabled")
         }
@@ -117,8 +124,19 @@ final class RecorderModel: ObservableObject {
             NSApp.activate(ignoringOtherApps: true)
             NSApp.windows.first { $0.canBecomeMain }?.makeKeyAndOrderFront(nil)
         }
+        appNotifications.onOpenRelease = { [weak self] version in
+            guard let self, self.updates.enabled, self.updates.available?.description == version else { return }
+            NSWorkspace.shared.open(RecorderRelease.releasesPage)
+        }
+        updates.onNewRelease = { [weak self] release in
+            guard let self, !self.isBusy, !NSApp.isActive else { return }
+            await self.appNotifications.postUpdate(release)
+        }
         appMonitor.start()
-        Task { await appNotifications.configure(enabled: meetingNotificationsEnabled) }
+        Task {
+            await appNotifications.configure(enabled: meetingNotificationsEnabled, updatesEnabled: updates.enabled)
+            updates.start()
+        }
     }
 
     func refreshMeetingApps() { Task { await appMonitor.refresh() } }
@@ -147,7 +165,22 @@ final class RecorderModel: ObservableObject {
     func setMeetingNotifications(_ enabled: Bool) {
         meetingNotificationsEnabled = enabled
         UserDefaults.standard.set(enabled, forKey: "meetingAppNotifications")
-        Task { await appNotifications.configure(enabled: enabled) }
+        Task { await appNotifications.configure(enabled: meetingNotificationsEnabled, updatesEnabled: updates.enabled) }
+    }
+
+    func setUpdateNotifications(_ enabled: Bool) {
+        updates.setEnabled(enabled)
+        Task { await appNotifications.configure(enabled: meetingNotificationsEnabled, updatesEnabled: updates.enabled) }
+    }
+
+    func openSettings(_ page: RecorderSettingsPage) {
+        settingsPage = page
+        showsSettings = true
+    }
+
+    func showUpdateSettings() {
+        openSettings(.general)
+        Task { await updates.check(manual: true) }
     }
 
     func setRecordingIslandEnabled(_ enabled: Bool) {
@@ -529,10 +562,14 @@ final class RecorderModel: ObservableObject {
     func cancelSpeakerSeparation() { speakerTask?.cancel() }
 
     func refreshPolished() {
+        hasPolishedText = false
         guard let stored = selected else { polished = PolishedTranscript(); polishedMeetingID = nil; return }
         do {
             polished = try PolishedTranscriptStore.read(stored.directory).0
             polishedMeetingID = stored.id
+            if !polished.entries.isEmpty {
+                hasPolishedText = TranscriptDocument.playbackParagraphs(stored.meeting).contains { polished.text(for: $0) != nil }
+            }
         } catch {
             polished = PolishedTranscript()
             polishedMeetingID = nil
@@ -574,7 +611,11 @@ final class RecorderModel: ObservableObject {
                     try Task.checkCancellation()
                     document.entries[paragraph.id.uuidString] = PolishedEntry(sourceHash: PolishedTranscript.sourceHash(paragraph), text: text, model: selectedModel.id)
                     expected = try PolishedTranscriptStore.save(document, directory: stored.directory, expected: expected)
-                    if self.selectedID == stored.id { self.polished = document; self.polishedMeetingID = stored.id }
+                    if self.selectedID == stored.id {
+                        self.polished = document
+                        self.polishedMeetingID = stored.id
+                        self.hasPolishedText = true
+                    }
                 }
                 self.polishProgress = "문장 정리가 완료되었습니다. 원문과 비교해 확인해 주세요."
             } catch {
@@ -666,8 +707,36 @@ final class RecorderModel: ObservableObject {
         }
     }
 
-    func revealSelected() {
-        if let directory = selected?.directory { NSWorkspace.shared.activateFileViewerSelecting([directory]) }
+    func openFolder(_ url: URL) {
+        guard (try? url.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) == true,
+              NSWorkspace.shared.open(url) else {
+            errorMessage = "폴더를 열 수 없습니다. 저장 위치를 확인해 주세요."
+            return
+        }
+    }
+
+    func copyDocument(_ tab: String, from stored: StoredMeeting) {
+        do {
+            let text: String?
+            let notice: String
+            switch tab {
+            case "transcript":
+                text = try MeetingCopy.transcript(stored)
+                notice = "대화록 복사됨"
+            case "polished":
+                text = polishedMeetingID == stored.id ? MeetingCopy.polished(stored, document: polished) : nil
+                notice = "정리본 복사됨"
+            case "summary":
+                text = try String(contentsOf: stored.directory.appendingPathComponent("summary.md"), encoding: .utf8)
+                notice = "요약 복사됨"
+            default: return
+            }
+            guard let text, !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+                errorMessage = "복사할 내용이 없습니다."
+                return
+            }
+            copyText(text, message: notice)
+        } catch { errorMessage = "문서를 읽을 수 없습니다. 회의 폴더에서 파일을 확인해 주세요." }
     }
 
     func openTranscript() {
@@ -675,12 +744,16 @@ final class RecorderModel: ObservableObject {
     }
 
     func copyPath(_ url: URL) {
+        guard FileManager.default.fileExists(atPath: url.path) else {
+            errorMessage = "파일이나 폴더를 찾을 수 없습니다."
+            return
+        }
         copyText(url.path, message: "경로 복사됨")
     }
 
     func copyText(_ text: String, message: String) {
-        NSPasteboard.general.clearContents()
-        guard NSPasteboard.general.setString(text, forType: .string) else {
+        pasteboard.clearContents()
+        guard pasteboard.setString(text, forType: .string) else {
             errorMessage = "클립보드에 복사하지 못했습니다. 다시 시도해 주세요."
             return
         }
@@ -734,7 +807,11 @@ final class RecorderModel: ObservableObject {
     func refreshSummary() {
         let file = selected?.directory.appendingPathComponent("summary.md")
         let stamp = file.flatMap { try? $0.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate }
-        if stamp != summaryStamp { summaryStamp = stamp; summaryRevision += 1 }
+        guard file != summaryFile || stamp != summaryStamp else { return }
+        summaryFile = file
+        summaryStamp = stamp
+        let text = file.flatMap { try? String(contentsOf: $0, encoding: .utf8) }
+        summaryText = text?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false ? text : nil
     }
 
     private func releaseTranscriber() async {

@@ -162,6 +162,13 @@ struct RecorderApp: App {
         }.windowStyle(.automatic).defaultSize(width: 1180, height: 800)
         .commands {
             CommandGroup(replacing: .newItem) {}
+            CommandGroup(after: .appInfo) {
+                Button("업데이트 확인…") {
+                    NSApp.activate(ignoringOtherApps: true)
+                    NSApp.windows.first { $0.canBecomeMain }?.makeKeyAndOrderFront(nil)
+                    model.showUpdateSettings()
+                }
+            }
         }
         MenuBarExtra(model.phase == .recording ? "녹음 중" : (model.phase == .stopping ? "저장 중" : "Meeting Recorder"),
                      systemImage: model.phase == .recording ? "record.circle.fill" : (model.phase == .stopping ? "square.circle.fill" : "waveform")) {
