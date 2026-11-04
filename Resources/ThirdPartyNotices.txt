@@ -17,6 +17,13 @@ https://github.com/snakers4/silero-vad
 https://huggingface.co/FluidInference/silero-vad-coreml
 FluidAudio's synthesis and speech recognition models are not used.
 
+Optional microphone fan suppression uses LocalVQE v1.3 from localai-org,
+converted to Core ML by FluidInference (Apache License 2.0). The four fixed
+model files are downloaded separately. The full Apache license is included
+in FluidAudio-LICENSE.txt.
+https://github.com/localai-org/LocalVQE
+https://huggingface.co/FluidInference/localvqe-coreml/tree/4205430781c240397073d6f7bf676fb4c732fc12
+
 WhisperKit (Argmax Open-Source SDK) 1.1.1
 Copyright Argmax, Inc. MIT License.
 https://github.com/argmaxinc/argmax-oss-swift/tree/v1.1.1

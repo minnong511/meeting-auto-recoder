@@ -41,6 +41,7 @@ enum Checks {
             ("Whisper 무음 메모리 제한·발화 확정·입력 공백 보존", { try suite.whisperWindows() }),
             ("한국어 토큰의 UTF-8 경계·단어 시각·원문 보존", { try suite.metalWordTiming() }),
             ("무음·밀린 미리보기 생략과 확정 결과 우선", { try suite.previewPriority() }),
+            ("팬 억제 시간 정렬·마지막 샘플·원음 복구", { try suite.fanFilterBuffer() }),
             ("잡음 제외·작은 목소리·발화 앞뒤 보존", { try suite.voiceBoundaries() }),
             ("단어 시간 없는 긴 발화는 누락·중복 없이 분할", { try suite.nonOverlappingSpeech() }),
             ("Whisper 긴 발언의 경계 문맥과 단어 중복 방지", { try suite.whisperOverlap() }),
@@ -300,6 +301,27 @@ final class RecorderChecks {
         let next = WhisperAudioWindow.Request(samples: preview.samples, start: 11, commitThrough: 12)
         let continued = mapper.map([TranscriptionSegment(end: 1, text: "다음 발언입니다.")], request: next, source: .system)
         try expect(continued.text == "다음 발언입니다." && !mapper.requiresReview, "오류 구간 이후의 전사를 멈추거나 경고 상태가 남음")
+    }
+
+    func fanFilterBuffer() throws {
+        var buffer = MicrophoneFilterBuffer()
+        buffer.append([0, 0.5], at: 10)
+        guard try buffer.mix([]) == nil else { throw CheckError.failed("지연된 필터 출력을 미리 내보냄") }
+        buffer.append([1, -0.5], at: 10 + 2.0 / 16_000)
+        let head = try buffer.mix([0.5, -0.5])
+        guard head?.start == 10, head?.samples == [0.25, 0], buffer.hasGap(at: 11) else {
+            throw CheckError.failed("팬 억제 원음 시각 또는 혼합 오류")
+        }
+        do { _ = try buffer.mix([0], final: true); throw CheckError.failed("불완전한 필터 종료를 허용함") }
+        catch is RecorderError { }
+        let recovery = buffer.takePendingOriginal()
+        guard recovery?.start == 10 + 2.0 / 16_000, recovery?.samples == [1, -0.5] else {
+            throw CheckError.failed("필터 오류 시 아직 보내지 않은 원음을 잃음")
+        }
+        buffer.append([0.25], at: 20)
+        let final = try buffer.mix([0.75], final: true)
+        guard final?.start == 20, final?.samples == [0.5], !buffer.hasGap(at: 90),
+              try buffer.mix([], final: true) == nil else { throw CheckError.failed("새 구간 또는 마지막 샘플 복원 실패") }
     }
 
     @MainActor func whisperLifecycle() async throws {

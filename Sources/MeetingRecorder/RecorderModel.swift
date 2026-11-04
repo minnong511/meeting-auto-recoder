@@ -36,6 +36,7 @@ final class RecorderModel: ObservableObject {
     @Published private(set) var mcpDiagnostic: MCPDiagnosticResult?
     private var copyNoticeTask: Task<Void, Never>?
     private var summaryStamp: Date?
+    @Published private(set) var microphoneFanSuppression = false
     @Published private(set) var microphoneEnabled = true
     @Published private(set) var isUpdatingMicrophone = false
     @Published private(set) var isSeparatingSpeakers = false
@@ -92,6 +93,9 @@ final class RecorderModel: ObservableObject {
         }
         if UserDefaults.standard.object(forKey: "meetingAppNotifications") != nil {
             meetingNotificationsEnabled = UserDefaults.standard.bool(forKey: "meetingAppNotifications")
+        }
+        if UserDefaults.standard.object(forKey: "microphoneFanSuppression") != nil {
+            microphoneFanSuppression = UserDefaults.standard.bool(forKey: "microphoneFanSuppression")
         }
         if UserDefaults.standard.object(forKey: "includeMicrophone") != nil {
             microphoneEnabled = UserDefaults.standard.bool(forKey: "includeMicrophone")
@@ -213,6 +217,12 @@ final class RecorderModel: ObservableObject {
         supportText = result.koreanInstalled ? selected.supportLabel : "\(selected.displayName) · 첫 녹음 시 다운로드 (\(selected.downloadDescription))"
     }
 
+    func setMicrophoneFanSuppression(_ enabled: Bool) {
+        guard !isBusy else { return }
+        microphoneFanSuppression = enabled
+        UserDefaults.standard.set(enabled, forKey: "microphoneFanSuppression")
+    }
+
     func selectSpeechModel(_ model: SpeechModel) {
         guard !isBusy else { return }
         speechModel = model
@@ -286,12 +296,25 @@ final class RecorderModel: ObservableObject {
                 modelWarning = "권장 모델을 준비하지 못해 이 Mac에 설치된 \(cached.displayName)로 전사했습니다."
                 segmentation = try await SpeechLane.prepareAssets(model: recordingModel, allowEnergyFallback: true, progress: progress)
             }
+            // Prepare the microphone lane once; the microphone can be re-enabled during a meeting.
+            var microphoneFilter: MicrophoneNoiseFilter?
+            var filterWarning: String?
+            if microphoneFanSuppression && recordingModel == .largeV3Metal && segmentation == .voiceActivity {
+                statusText = "마이크 팬 소음 억제 모델 준비 중…"
+                do { microphoneFilter = try await MicrophoneNoiseFilter.prepare() }
+                catch {
+                    try Task.checkCancellation()
+                    filterWarning = "팬 소음 억제 모델을 준비하지 못해 마이크 원음으로 전사했습니다. " + error.localizedDescription
+                }
+            }
             try Task.checkCancellation()
             guard let root else { throw RecorderError.message("저장 폴더를 선택해 주세요.") }
             let stored = try MeetingStore(root: root).create(title: title)
             current = stored
             current?.meeting.recordingTarget = target
             current?.meeting.transcriptionEngine = recordingModel.engineDescription + " · " + segmentation.rawValue
+                + (microphoneFilter == nil ? "" : " · mic LocalVQE 1.3 50%")
+            if let filterWarning { current?.meeting.warnings.append(filterWarning) }
             if let modelWarning { current?.meeting.warnings.append(modelWarning) }
             if segmentation == .energy {
                 current?.meeting.warnings.append("말소리 감지 모델을 준비하지 못해 이번 녹음에는 음량 기준 감지를 사용했습니다.")
@@ -299,7 +322,8 @@ final class RecorderModel: ObservableObject {
             selectedID = stored.id
             updateList(stored)
             for source in AudioSource.allCases {
-                let lane = try await SpeechLane.create(source: source, segmentation: segmentation, onResult: { [weak self] segment, final in
+                let lane = try await SpeechLane.create(source: source, segmentation: segmentation,
+                    microphoneNoiseFilter: source == .microphone ? microphoneFilter : nil, onResult: { [weak self] segment, final in
                     self?.receive(segment, final: final, meetingID: stored.id)
                 }, onError: { [weak self] error in
                     Task { @MainActor in self?.transcriptionFailed(source: source, error: error, meetingID: stored.id) }

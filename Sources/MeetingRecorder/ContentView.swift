@@ -779,6 +779,12 @@ private struct RecorderSettingsView: View {
                         .font(.caption).foregroundStyle(.secondary)
                     Text("권장 모델은 한국어 정확도와 자막 확정 시간을 기준으로 선택했습니다. Core ML 모델은 저장 공간을 적게 사용합니다.")
                         .font(.caption).foregroundStyle(.secondary)
+                    Toggle("마이크 팬 소음 억제", isOn: Binding(
+                        get: { model.speechModel == .largeV3Metal && model.microphoneFanSuppression },
+                        set: model.setMicrophoneFanSuppression))
+                        .disabled(model.isBusy || model.speechModel != .largeV3Metal)
+                    Text("Whisper large-v3 (Metal)에서 마이크 전사에 적용합니다. 처음 사용할 때 약 20MB를 내려받습니다.")
+                        .font(.caption).foregroundStyle(.secondary)
                     Text("녹음 중 확정된 문장을 그대로 저장합니다. 종료할 때는 마지막 미확정 문장만 마무리합니다.")
                         .font(.caption).foregroundStyle(.secondary)
                 } header: { Label("전사", systemImage: "text.bubble") }

@@ -330,6 +330,7 @@ public final class SpeechLane {
     public static func create(source: AudioSource, emitPartials: Bool = true,
                               segmentation: SpeechSegmentation = .voiceActivity, silenceDuration: Double? = nil, speechThreshold: Float = 0.5,
                               decoder: LiveSpeechDecoder = .whisper, skipObsoletePreviews: Bool = true,
+                              microphoneNoiseFilter: MicrophoneNoiseFilter? = nil,
                               onResult: @escaping @MainActor (TranscriptSegment, Bool) -> Void,
                               onError: @escaping (String) -> Void,
                               onWarning: @escaping @MainActor (String) -> Void = { _ in }) async throws -> SpeechLane {
@@ -338,6 +339,7 @@ public final class SpeechLane {
         let lane = SpeechLane(source: source, continuation: continuation)
         let previews = lane.previewPolicy
         lane.resultTask = Task {
+            var filter = source == .microphone ? microphoneNoiseFilter : nil
             var window = WhisperAudioWindow(silenceDuration: silenceDuration ?? (segmentation == .energy ? 0.8 : 0.6),
                 maximumDuration: alignedWords ? 24 : 30, retainedTailSeconds: alignedWords ? 8 : 0)
             var activity = SpeechActivityBuffer(threshold: speechThreshold)
@@ -377,6 +379,29 @@ public final class SpeechLane {
                     try await appendWindow(tail.samples, at: tail.start, isSpeech: tail.isSpeech)
                 }
             }
+            func appendAfterFilter(_ samples: [Float], at start: Double) async throws {
+                if segmentation == .voiceActivity {
+                    for block in try await activity.append(samples, at: start) {
+                        try await appendWindow(block.samples, at: block.start, isSpeech: block.isSpeech)
+                    }
+                } else { try await appendWindow(samples, at: start) }
+            }
+            func recoverMicrophone(_ failed: MicrophoneNoiseFilter) async throws -> MicrophoneNoiseFilter.Block? {
+                try Task.checkCancellation()
+                filter = nil
+                await onWarning("마이크 팬 소음 억제가 중단되어 남은 마이크 음성을 원음으로 전사했습니다.")
+                return failed.takePendingOriginal()
+            }
+            func finishWindow() async throws {
+                if let filter {
+                    let tail: MicrophoneNoiseFilter.Block?
+                    do { tail = try await filter.finish() }
+                    catch { tail = try await recoverMicrophone(filter) }
+                    if let tail { try await appendAfterFilter(tail.samples, at: tail.start) }
+                }
+                try await flushActivity()
+                if let request = window.finish() { try await decode(request) }
+            }
             for await input in stream {
                 if Task.isCancelled || failure != nil {
                     if case let .barrier(reply, _) = input { reply.resume(throwing: failure ?? CancellationError()) }
@@ -385,17 +410,16 @@ public final class SpeechLane {
                 do {
                     switch input {
                     case let .audio(samples, start):
-                        if segmentation == .voiceActivity {
-                            for block in try await activity.append(samples, at: start) {
-                                try await appendWindow(block.samples, at: block.start, isSpeech: block.isSpeech)
-                            }
-                        } else { try await appendWindow(samples, at: start) }
+                        if filter?.hasGap(at: start) == true { try await finishWindow() }
+                        if let filter {
+                            let block: MicrophoneNoiseFilter.Block?
+                            do { block = try await filter.append(samples, at: start) }
+                            catch { block = try await recoverMicrophone(filter) }
+                            if let block { try await appendAfterFilter(block.samples, at: block.start) }
+                        } else { try await appendAfterFilter(samples, at: start) }
                     case let .barrier(reply, finalize):
                         do {
-                            if finalize {
-                                try await flushActivity()
-                                if let request = window.finish() { try await decode(request) }
-                            }
+                            if finalize { try await finishWindow() }
                             reply.resume()
                         } catch { reply.resume(throwing: error); throw error }
                     }
@@ -406,10 +430,7 @@ public final class SpeechLane {
                 }
             }
             if !Task.isCancelled && failure == nil {
-                do {
-                    try await flushActivity()
-                    if let request = window.finish() { try await decode(request) }
-                }
+                do { try await finishWindow() }
                 catch { failure = error; if !(error is CancellationError) { onError(error.localizedDescription) } }
             }
             if let failure { throw failure }
