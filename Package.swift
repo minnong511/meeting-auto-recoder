@@ -11,8 +11,9 @@ let package = Package(
         .package(url: "https://github.com/argmaxinc/argmax-oss-swift.git", exact: "1.1.1")
     ],
     targets: [
+        .binaryTarget(name: "whisper", path: ".build/native-whisper/whisper.xcframework"),
         .target(name: "RecorderCore"),
-        .target(name: "RecorderAudio", dependencies: ["RecorderCore", .product(name: "FluidAudio", package: "FluidAudio"), .product(name: "WhisperKit", package: "argmax-oss-swift")]),
+        .target(name: "RecorderAudio", dependencies: ["RecorderCore", "whisper", .product(name: "FluidAudio", package: "FluidAudio"), .product(name: "WhisperKit", package: "argmax-oss-swift")]),
         .executableTarget(name: "MeetingRecorder", dependencies: ["RecorderCore", "RecorderAudio"]),
         .executableTarget(name: "MeetingRecorderMCP", dependencies: ["RecorderCore"]),
         .executableTarget(name: "RecorderChecks", dependencies: ["RecorderCore", "RecorderAudio", .product(name: "WhisperKit", package: "argmax-oss-swift")]),

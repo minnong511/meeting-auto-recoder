@@ -1,6 +1,6 @@
 # 한국어 실시간 전사 비교 재현
 
-녹음 앱의 두 단계(말소리 구간 결정 → 로컬 모델의 확정 문장)를 함께 비교합니다. Qwen3-ASR는 비교용 프로그램에서만 실행됩니다. 앱 빌드나 녹음에 Python 또는 Qwen 가중치는 필요하지 않습니다. 최신 결과와 선택 근거는 [측정 보고서](../../docs/STT-ACCURACY.md)에 있습니다.
+녹음 앱의 두 단계(말소리 구간 결정 → 로컬 모델의 확정 문장)를 함께 비교합니다. Qwen3-ASR는 비교용 프로그램에서만 실행됩니다. 앱 빌드나 녹음에 Python 또는 Qwen 가중치는 필요하지 않습니다. Core ML 모델 선택 근거는 [정확도 보고서](../../docs/STT-ACCURACY.md), GPU 실행 경로와의 비교는 [확정 지연 보고서](../../docs/STT-LATENCY.md)에 있습니다.
 
 1. Apple Silicon Mac에서 [빌드 가이드](../../docs/BUILDING.md)에 따라 `bash scripts/build-app.sh --package-only`로 빌드합니다.
 2. 평가 자료 생성에는 Python, NumPy 2.4.6, SciPy 1.17.1이 필요합니다. Qwen까지 비교하려면 `bash experiments/asr/setup-local-asr.sh qwen17`로 고정된 MLX Audio 환경과 가중치를 준비합니다. 아래의 `python`은 해당 환경의 `.runtime/asr/bin/python`을 사용해도 됩니다.
@@ -19,7 +19,7 @@ python experiments/accuracy/score.py "$out/test.json" "$out/baseline.jsonl" "$ou
 python experiments/accuracy/score.py "$out/latency.json" "$out/large-live.jsonl"
 ```
 
-첫 인자는 `large-v3-turbo`(626 MB), `large-v3`(948 MB), `large-v3-turbo-fp16`(1.64 GB), 비교 전용 `qwen3-asr-1.7b` 중 하나입니다. 최종 앱은 무음에서 또는 입력보다 0.5초 넘게 밀린 미리보기를 취소하고, 함께 대기 중인 요청에서는 확정 전사를 먼저 처리합니다. 기본 앱은 Python 없이 실행되며, Qwen 실험 가중치와 런타임의 출처는 [실험 고지](../asr/ThirdPartyNotices.txt)에 있습니다. 모델 파일을 비교할 때는 [검증한 가중치 해시](model-hashes.json)를 참고하세요. 초기 다섯 모델 비교를 재현하려면 `--eager-previews`를 추가합니다(비교는 한 입력씩 순차 실행). 비교 시 한 번에 한 모델만 실행하고 매번 새 출력 경로를 사용합니다. `energy`는 이전 음량 기준과 0.8초 무음, `vad --silence 0.6`은 Silero 확률 0.5와 0.6초 무음입니다. `dev.json`은 설정 결정, `test.json`은 모델 선택, `confirm.json`은 선택 후 독립 재검증용입니다.
+첫 인자는 `large-v3-metal`(whisper.cpp FP16, 3.10GB), `large-v3-turbo`(626 MB), `large-v3`(948 MB), `large-v3-turbo-fp16`(1.64 GB), 비교 전용 `qwen3-asr-1.7b` 중 하나입니다. 최종 앱은 무음에서 또는 입력보다 0.5초 넘게 밀린 미리보기를 취소하고, 함께 대기 중인 요청에서는 확정 전사를 먼저 처리합니다. 기본 앱은 Python 없이 실행되며, Qwen 실험 가중치와 런타임의 출처는 [실험 고지](../asr/ThirdPartyNotices.txt)에 있습니다. 모델 파일을 비교할 때는 [검증한 가중치 해시](model-hashes.json)를 참고하세요. 초기 다섯 모델 비교를 재현하려면 `--eager-previews`를 추가합니다(비교는 한 입력씩 순차 실행). 비교 시 한 번에 한 모델만 실행하고 매번 새 출력 경로를 사용합니다. `energy`는 이전 음량 기준과 0.8초 무음, `vad --silence 0.6`은 Silero 확률 0.5와 0.6초 무음입니다. `dev.json`은 설정 결정, `test.json`은 모델 선택, `confirm.json`은 선택 후 독립 재검증용입니다.
 
 - 기준 음성: [Google FLEURS ko_kr](https://huggingface.co/datasets/google/fleurs/tree/70bb2e84b976b7e960aa89f1c648e09c59f894dd/data/ko_kr), CC BY 4.0. 익명 음성 ID, SHA-256, 사전에 표시한 고유명사·숫자·허용 표기와 발화 종료 추정 시각은 `cases.json`에 있습니다. Google의 문장 정답을 모델 프롬프트나 사후 교정에 넣지 않습니다. 12개 무발화 파일은 고정된 시드로 생성합니다.
 - CER는 NFC 한글 음절 기준 편집 거리(삽입 + 삭제 + 치환)의 합을 전체 정답 글자 수로 나눕니다. 대소문자·공백·문장부호·기호만 정규화하고 한글 수사와 아라비아 숫자는 같게 만들지 않습니다. 고유명사는 정답 표기, 숫자는 사전에 허용한 값·단위 조합이 결과에 포함되는지 따로 셉니다. 이 값은 등장 적중률이며 잘못 추가한 고유명사의 정밀도를 뜻하지 않습니다.

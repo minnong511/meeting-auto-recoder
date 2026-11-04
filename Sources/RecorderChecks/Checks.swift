@@ -39,6 +39,7 @@ enum Checks {
             ("두 입력의 중간 결과 독립 처리", { try suite.independentPartials() }),
             ("Whisper 기존 모델 재사용·선택 모델 설치 상태 분리", { try await suite.speechModelCache() }),
             ("Whisper 무음 메모리 제한·발화 확정·입력 공백 보존", { try suite.whisperWindows() }),
+            ("한국어 토큰의 UTF-8 경계·단어 시각·원문 보존", { try suite.metalWordTiming() }),
             ("무음·밀린 미리보기 생략과 확정 결과 우선", { try suite.previewPriority() }),
             ("잡음 제외·작은 목소리·발화 앞뒤 보존", { try suite.voiceBoundaries() }),
             ("단어 시간 없는 긴 발화는 누락·중복 없이 분할", { try suite.nonOverlappingSpeech() }),
@@ -147,6 +148,8 @@ final class RecorderChecks {
         }
         let legacy = cache.appendingPathComponent("ready-model-path.txt")
         try turbo.path.write(to: legacy, atomically: true, encoding: .utf8)
+        let missingMetal = await SpeechSupport.inspect(model: .largeV3Metal, cacheRoot: cache)
+        try expect(!missingMetal.koreanInstalled && missingMetal.engine == "whisper.cpp Metal", "Core ML 캐시를 GGML 설치 상태로 잘못 표시함")
         let before = try Data(contentsOf: legacy)
         let defaultReport = await SpeechSupport.inspect(model: .largeV3Turbo, cacheRoot: cache)
         let tinyBefore = await SpeechSupport.inspect(model: .tiny, cacheRoot: cache)
@@ -186,6 +189,23 @@ final class RecorderChecks {
         let afterGap = window.append(Array(repeating: 0.02, count: 8_000), at: 90)
         try expect(afterGap.count == 1 && afterGap[0].start == 80 && abs(afterGap[0].end - 80.5) < 0.001, "마이크 공백을 앞 발화에 붙이거나 시간을 이동함")
         try expect(window.finish()?.start == 90, "재개된 입력의 원래 시간 손실")
+    }
+
+    func metalWordTiming() throws {
+        // The tokenizer may split even a single Korean syllable across byte fragments.
+        let bytes = Array("팀".utf8)
+        let tokens = [
+            MetalTimedToken(bytes: Data([32,bytes[0]]), start: 0.2, end: 0.22, id: 1, probability: 0.9),
+            MetalTimedToken(bytes: Data(bytes.dropFirst()) + Data("북투".utf8), start: 0.22, end: 0.6, id: 2, probability: 0.95),
+            MetalTimedToken(bytes: Data(" 33만".utf8), start: 0.7, end: 1.1, id: 3, probability: 0.9)]
+        let text = " 팀북투 33만"
+        let words = MetalTimedToken.words(tokens, matching: text)
+        try expect(words?.map(\.word) == [" 팀북투"," 33만"] && words?.first?.end == 0.6 && words?.last?.start == 0.7,
+                   "나뉜 한글 바이트나 단어별 재생 시각을 잃음")
+        try expect(MetalTimedToken.words(tokens, matching: "실제 원문") == nil, "모델의 원문과 다른 단어 정렬을 사용함")
+        var invalid = tokens
+        invalid[0].end = -1
+        try expect(MetalTimedToken.words(invalid, matching: text) == nil, "유효하지 않은 시각을 단어 정답처럼 사용함")
     }
 
     func previewPriority() throws {

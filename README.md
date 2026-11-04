@@ -29,7 +29,7 @@ Swift 기반 macOS 앱이며 음성 인식에는 WhisperKit과 Whisper 모델을
 
 - Apple Silicon Mac, macOS 26 이상
 - 첫 음성 인식 모델 다운로드를 위한 인터넷 연결
-- 공개판 0.8.0의 기본 모델은 약 627MB, 소스 빌드의 권장 Whisper large-v3 모델은 약 948MB입니다. 토크나이저·말소리 감지 모델·녹음 파일용 공간이 추가로 필요합니다.
+- 공개판 0.8.0의 기본 모델은 약 627MB, 소스 빌드에서는 메모리 16GB 이상 Mac의 권장 Whisper large-v3 Metal 모델이 약 3.10GB, 16GB 미만 Mac의 기본 Core ML 모델이 약 948MB입니다. 토크나이저·말소리 감지 모델·녹음 파일용 공간이 추가로 필요합니다.
 - 처음 녹음할 때 시스템 오디오 권한, 마이크를 사용하는 경우 마이크 권한
 
 ### 공개 배포본 0.8.0 설치
@@ -46,7 +46,7 @@ curl -fsSL --proto '=https' --proto-redir '=https' https://raw.githubusercontent
 
 ### 개발판 0.8.1 빌드
 
-개발판은 Swift 6.2 도구 모음과 Python 3이 필요합니다. 저장소를 내려받은 뒤 [개발자 빌드 가이드](docs/BUILDING.md)의 서명 준비를 확인하고 실행하세요.
+개발판의 소스 빌드에는 Swift 6.2 도구 모음, Python 3, CMake 3.28 이상 또는 uv가 필요합니다. 저장소를 내려받은 뒤 [개발자 빌드 가이드](docs/BUILDING.md)의 서명 준비를 확인하고 실행하세요.
 
 ```sh
 # 진행 중인 녹음을 마치고 앱을 종료한 뒤 실행합니다.
@@ -70,7 +70,7 @@ open 'dist/Meeting Recorder.app'
 
 ### 한국어 음성 인식 (소스 빌드)
 
-기본 설정은 **Whisper large-v3 + 말소리 감지**입니다. 마이크와 회의 앱 소리에서 각각 발화가 끝나면 전사를 확정합니다. 음성과 전사는 Mac에서 처리하며, 이전에 직접 고른 모델은 업데이트 후에도 유지합니다. **설정 및 연결 → 음성 인식 모델**에서 더 빨리 자막을 확정하는 Turbo 모델도 선택할 수 있습니다. [문자 오류율·고유명사·숫자·무음·확정 지연 비교](docs/STT-ACCURACY.md)를 참고하세요.
+메모리 16GB 이상 Mac에서는 **Whisper large-v3 (Metal) + 말소리 감지**로 전사합니다. 16GB 미만 Mac의 기본값은 저장 공간을 덜 쓰는 Core ML 버전입니다. 마이크와 회의 앱은 각자 발화의 끝을 판단하고 녹음과 전사는 Mac에서 처리합니다. **설정 및 연결 → 음성 인식 모델**에서 모델을 바꿀 수 있습니다. 기존에 직접 고른 모델은 업데이트 후에도 유지합니다. [자막 확정 지연과 정확도 비교](docs/STT-LATENCY.md) · [이전 정확도 개선 측정](docs/STT-ACCURACY.md).
 
 ### 문장 다듬기 — 개발판 0.8.1
 
@@ -109,7 +109,8 @@ Ollama와 내려받은 로컬 모델을 준비한 뒤 **설정 및 연결 → �
 개발자는 아래 명령으로 회귀 검사를 실행할 수 있습니다. 빌드·서명 및 추가 검사 절차는 [개발자 가이드](docs/BUILDING.md)에 있습니다.
 
 ```sh
-swift run RecorderChecks
+bash scripts/build-app.sh --package-only
+.build/release/RecorderChecks
 ```
 
 문제를 제보할 때는 사용 중인 앱 버전, macOS 버전, 재현 순서와 오류 메시지를 함께 기록해 주세요. 대화록이나 녹음 파일은 개인정보와 회의 참여자의 동의를 확인한 뒤 공유하세요.
@@ -117,6 +118,7 @@ swift run RecorderChecks
 ## 참고 및 출처
 
 - [WhisperKit / Argmax Open-Source SDK](https://github.com/argmaxinc/argmax-oss-swift)
+- [whisper.cpp](https://github.com/ggml-org/whisper.cpp)
 - [OpenAI Whisper](https://github.com/openai/whisper)
 - [FluidAudio](https://github.com/FluidInference/FluidAudio)
 - [Pretendard](https://github.com/orioncactus/pretendard)

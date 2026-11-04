@@ -777,7 +777,7 @@ private struct RecorderSettingsView: View {
                     }.disabled(model.isBusy)
                     Text(model.speechModel.downloadDescription + " · 선택한 모델은 첫 녹음 시 준비합니다.")
                         .font(.caption).foregroundStyle(.secondary)
-                    Text("고유명사 인식은 권장 모델을, 빠른 자막 확정은 Turbo를 선택하세요.")
+                    Text("권장 모델은 한국어 정확도와 자막 확정 시간을 기준으로 선택했습니다. Core ML 모델은 저장 공간을 적게 사용합니다.")
                         .font(.caption).foregroundStyle(.secondary)
                     Text("녹음 중 확정된 문장을 그대로 저장합니다. 종료할 때는 마지막 미확정 문장만 마무리합니다.")
                         .font(.caption).foregroundStyle(.secondary)

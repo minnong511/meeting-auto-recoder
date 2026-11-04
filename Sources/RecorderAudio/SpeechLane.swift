@@ -6,14 +6,17 @@ import WhisperKit
 
 /// Local speech models that can transcribe Korean.
 public enum SpeechModel: String, CaseIterable, Codable, Sendable, Identifiable {
+    case largeV3Metal = "large-v3-metal"
     case largeV3Turbo = "large-v3-turbo"
     case largeV3TurboFP16 = "large-v3-turbo-fp16"
     case largeV3 = "large-v3"
     case small, base, tiny
-    public static let recommended: Self = .largeV3
+    // The FP16 GPU path was validated with 16 GiB unified memory. Keep the compact model on smaller Macs.
+    public static let recommended: Self = ProcessInfo.processInfo.physicalMemory >= 16 * 1024 * 1024 * 1024 ? .largeV3Metal : .largeV3
     public var id: String { rawValue }
     public var variant: String {
         switch self {
+        case .largeV3Metal: return MetalWhisperAssets.file
         case .largeV3Turbo: return "openai_whisper-large-v3-v20240930_626MB"
         case .largeV3TurboFP16: return "openai_whisper-large-v3-v20240930_turbo"
         case .largeV3: return "openai_whisper-large-v3_947MB"
@@ -24,9 +27,10 @@ public enum SpeechModel: String, CaseIterable, Codable, Sendable, Identifiable {
     }
     public var displayName: String {
         switch self {
+        case .largeV3Metal: return "Whisper large-v3 (Metal)"
         case .largeV3Turbo: return "Whisper large-v3-turbo"
         case .largeV3TurboFP16: return "Whisper large-v3-turbo FP16"
-        case .largeV3: return "Whisper large-v3"
+        case .largeV3: return "Whisper large-v3 (Core ML)"
         case .small: return "Whisper small"
         case .base: return "Whisper base"
         case .tiny: return "Whisper tiny"
@@ -35,6 +39,7 @@ public enum SpeechModel: String, CaseIterable, Codable, Sendable, Identifiable {
     public var downloadDescription: String {
         let size: String
         switch self {
+        case .largeV3Metal: return "약 3.10 GB · 맥 로컬 GPU"
         case .largeV3Turbo: size = "약 627 MB"
         case .largeV3TurboFP16: size = "약 1.64 GB"
         case .largeV3: size = "약 948 MB"
@@ -45,7 +50,8 @@ public enum SpeechModel: String, CaseIterable, Codable, Sendable, Identifiable {
         return "\(size) + 토크나이저·추가 캐시"
     }
     public var supportLabel: String { "\(displayName) · 실시간 결과 저장 · 로컬" }
-    public var engineDescription: String { "WhisperKit · \(variant) · ko · live-only" }
+    public var engineName: String { self == .largeV3Metal ? "whisper.cpp Metal" : "WhisperKit" }
+    public var engineDescription: String { "\(engineName) · \(variant) · ko · live-only" }
 }
 
 public struct SpeechSupport: Codable, Sendable {
@@ -62,9 +68,14 @@ public struct SpeechSupport: Codable, Sendable {
     public var postProcessingEnabled = false
 
     public static func inspect(model: SpeechModel = .recommended) async -> SpeechSupport {
-        await inspect(model: model, cacheRoot: LocalSpeechEngine.cacheRoot)
+        await inspect(model: model, cacheRoot: model == .largeV3Metal ? MetalWhisperAssets.directory : LocalSpeechEngine.cacheRoot)
     }
     public static func inspect(model: SpeechModel, cacheRoot: URL) async -> SpeechSupport {
+        if model == .largeV3Metal {
+            return SpeechSupport(engineAvailable: true, koreanSupported: true,
+                koreanInstalled: MetalWhisperAssets.installed(in: cacheRoot), supportedLocales: ["ko-KR"],
+                engine: model.engineName, model: model.variant, cachePath: cacheRoot.path)
+        }
         let path = try? String(contentsOf: LocalSpeechEngine.readyMarker(for: model, cacheRoot: cacheRoot), encoding: .utf8)
         return SpeechSupport(engineAvailable: true, koreanSupported: true,
             koreanInstalled: path.map { LocalSpeechEngine.validModelFolder(URL(fileURLWithPath: $0), model: model) } ?? false,
@@ -82,6 +93,7 @@ private actor LocalSpeechEngine {
         cacheRoot.appendingPathComponent(model == .largeV3Turbo ? "ready-model-path.txt" : "ready-model-path-\(model.rawValue).txt")
     }
     private var kit: WhisperKit?
+    private var metal: MetalWhisperDecoder?
     private var loadedModel: SpeechModel?
     private var busy = false
     private var required: [CheckedContinuation<Void, Never>] = []
@@ -104,11 +116,22 @@ private actor LocalSpeechEngine {
         await acquire()
         defer { release() }
         try Task.checkCancellation()
-        if kit != nil && loadedModel == model { return }
+        if (kit != nil || metal != nil) && loadedModel == model { return }
+        metal = nil
+        loadedModel = nil
         if kit != nil {
             await kit?.unloadModels()
             kit = nil
-            loadedModel = nil
+        }
+        if model == .largeV3Metal {
+            let file = try await MetalWhisperAssets.prepare(progress: progress)
+            try Task.checkCancellation()
+            progress("로컬 GPU에서 Whisper large-v3 준비 중…")
+            let decoder = try MetalWhisperDecoder(model: file)
+            try Task.checkCancellation()
+            metal = decoder; loadedModel = model
+            progress("Whisper large-v3 준비됨 · 로컬 GPU 전사")
+            return
         }
         try FileManager.default.createDirectory(at: Self.cacheRoot, withIntermediateDirectories: true)
         let marker = Self.readyMarker(for: model, cacheRoot: Self.cacheRoot)
@@ -145,6 +168,13 @@ private actor LocalSpeechEngine {
         await acquire(required: request.isFinal)
         defer { release() }
         try Task.checkCancellation()
+        if let metal {
+            var result = try await metal.transcribe(request.samples, aligned: wordTimestamps)
+            if request.isFinal && result.contains(where: { TranscriptText.isRepetitionLoop($0.text) }) {
+                result = try await metal.transcribe(request.samples, aligned: wordTimestamps, temperature: 0.2)
+            }
+            return result
+        }
         guard let kit else { throw RecorderError.message("Whisper 모델이 준비되지 않았습니다.") }
         var options = DecodingOptions(verbose: false, task: .transcribe, language: "ko",
             temperatureFallbackCount: 2, usePrefillPrompt: true, detectLanguage: false,
@@ -169,6 +199,7 @@ private actor LocalSpeechEngine {
         defer { release() }
         await kit?.unloadModels()
         kit = nil
+        metal = nil
         loadedModel = nil
     }
 }

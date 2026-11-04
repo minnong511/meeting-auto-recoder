@@ -276,11 +276,14 @@ final class RecorderModel: ObservableObject {
             } catch {
                 try Task.checkCancellation()
                 // An offline upgrade can still use the previously cached model. Respect an explicit choice.
-                guard recordingModel == .recommended,
-                      UserDefaults.standard.string(forKey: "speechModel") == nil,
-                      await SpeechSupport.inspect(model: .largeV3Turbo).koreanInstalled else { throw error }
-                recordingModel = .largeV3Turbo
-                modelWarning = "권장 모델을 준비하지 못해 이 Mac에 설치된 Whisper large-v3-turbo로 전사했습니다."
+                guard recordingModel == .recommended, UserDefaults.standard.string(forKey: "speechModel") == nil else { throw error }
+                var cached: SpeechModel?
+                for candidate in [SpeechModel.largeV3, .largeV3Turbo] where candidate != recordingModel {
+                    if await SpeechSupport.inspect(model: candidate).koreanInstalled { cached = candidate; break }
+                }
+                guard let cached else { throw error }
+                recordingModel = cached
+                modelWarning = "권장 모델을 준비하지 못해 이 Mac에 설치된 \(cached.displayName)로 전사했습니다."
                 segmentation = try await SpeechLane.prepareAssets(model: recordingModel, allowEnergyFallback: true, progress: progress)
             }
             try Task.checkCancellation()

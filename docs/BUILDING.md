@@ -2,6 +2,8 @@
 
 ## 준비 사항
 
+Metal 전사 엔진은 소스 빌드 때 한 번 컴파일합니다. CMake 3.28 이상 또는 uv가 있어야 합니다. 일반 사용자의 Mac에는 이 빌드 도구가 필요하지 않습니다.
+
 Apple Silicon Mac, macOS 26 이상, Swift 6.2 도구 모음과 Python 3가 필요합니다. 첫 빌드에서는 Swift 패키지 의존성을 내려받으므로 인터넷이 필요합니다. 설치용 ZIP을 사용하는 사람은 이 개발 환경이 필요하지 않습니다.
 
 아래 절차는 소스를 빌드하는 개발자를 위한 것입니다. **배포본 사용자에게는 인증서, 개인 키 또는 `signing.json`이 필요하지 않습니다.** 배포된 앱은 원래 서명 그대로 설치하며, 각 사용자가 Mac에서 녹음 권한을 허용합니다.
@@ -81,10 +83,10 @@ python3 scripts/package-release.py --app 'dist/package/Meeting Recorder.app'
 
 ## 로컬 음성 인식
 
-소스 빌드의 권장 전사 모델은 Whisper large-v3입니다. 모델과 Silero 말소리 감지는 처음 한 번 내려받습니다. 설치 직후 미리 준비하려면 아래 명령을 사용합니다.
+메모리 16GB 이상 Mac에서는 Whisper large-v3 FP16을 whisper.cpp의 Metal 경로로 실행합니다. 가중치 파일(약 3.10GB)은 고정 리비전에서 처음 한 번 내려받아 SHA-256으로 검사합니다. 16GB 미만 Mac은 기존 Core ML 모델(약 948MB)을 기본으로 사용합니다. Silero 말소리 감지는 두 경로가 공유합니다. 소스 첫 빌드에는 CMake 3.28 이상 또는 uv가 필요합니다. 빌드 스크립트는 체크섬으로 고정한 whisper.cpp 1.9.2 소스를 받아 arm64 Metal 코드를 실행 파일에 정적으로 연결합니다. 빌드 결과를 재사용하고 앱에는 라이선스를 포함합니다. 설치 직후 미리 준비하려면 아래 명령을 사용합니다.
 
 ```sh
 'dist/Meeting Recorder.app/Contents/MacOS/MeetingRecorder' --prepare-speech
 ```
 
-직접 선택한 모델은 그대로 사용합니다. 업데이트 후 권장 모델 준비에 실패하고 이전 Turbo가 캐시에 있다면, 모델을 직접 지정하지 않은 경우에만 그 녹음에서 Turbo를 사용합니다. 말소리 감지 모델을 준비하지 못하면 이전 음량 기준으로 녹음을 계속합니다. 실제 사용한 방식과 예외는 회의 메타데이터에 남깁니다. Qwen3-ASR 비교 도구의 Python 환경은 앱과 별개입니다. [평가 재현](../experiments/accuracy/README.md)
+직접 선택한 모델은 그대로 사용합니다. 업데이트 후 권장 모델 준비에 실패하고 음성 인식 모델을 직접 선택하지 않았다면, 캐시에 있는 Core ML large-v3, Turbo 순으로 대체 모델을 선택합니다. 말소리 감지 모델을 준비하지 못하면 이전 음량 기준으로 녹음을 계속합니다. 실제 사용한 방식과 예외는 회의 메타데이터에 남깁니다. Qwen3-ASR 비교 도구의 Python 환경은 앱과 별개입니다. [평가 재현](../experiments/accuracy/README.md)

@@ -59,7 +59,7 @@ def main():
             shutil.copyfile(ROOT / source, bundle / target)
         if f"**{version}**" not in (bundle / "README.md").read_text():
             raise RuntimeError("설치 README의 버전이 앱 버전과 다릅니다.")
-        sources = [ROOT / "Package.swift", ROOT / "Package.resolved"]
+        sources = [ROOT / "Package.swift", ROOT / "Package.resolved", ROOT / "scripts/prepare-whisper-metal.py"]
         for folder in ("Sources", "Resources"):
             sources.extend(p for p in (ROOT / folder).rglob("*") if p.is_file() and not p.name.startswith("."))
         lines = [hashlib.sha256(p.read_bytes()).hexdigest() + "  " + p.relative_to(ROOT).as_posix() for p in sorted(sources)]

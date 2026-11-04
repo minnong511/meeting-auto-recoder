@@ -9,6 +9,7 @@ esac
 RECORDER_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$RECORDER_ROOT"
 python3 scripts/app-signing.py preflight
+python3 scripts/prepare-whisper-metal.py
 mkdir -p .build/cache .build/ModuleCache
 export CLANG_MODULE_CACHE_PATH="$RECORDER_ROOT/.build/ModuleCache"
 export SWIFTPM_MODULECACHE_OVERRIDE="$RECORDER_ROOT/.build/ModuleCache"
@@ -24,6 +25,7 @@ cp "$RECORDER_BIN/MeetingRecorder" "$RECORDER_APP/Contents/MacOS/MeetingRecorder
 cp "$RECORDER_BIN/MeetingRecorderMCP" "$RECORDER_APP/Contents/MacOS/MeetingRecorderMCP"
 cp Resources/Info.plist "$RECORDER_APP/Contents/Info.plist"
 mkdir -p "$RECORDER_APP/Contents/Resources"
+cp Resources/whisper.cpp-LICENSE.txt "$RECORDER_APP/Contents/Resources/"
 cp -f .build/checkouts/FluidAudio/LICENSE "$RECORDER_APP/Contents/Resources/FluidAudio-LICENSE.txt"
 cp -f .build/checkouts/FluidAudio/ThirdPartyLicenses/fastcluster-LICENSE.md "$RECORDER_APP/Contents/Resources/fastcluster-LICENSE.txt"
 cp -f .build/checkouts/FluidAudio/ThirdPartyLicenses/vbx-LICENSE.md "$RECORDER_APP/Contents/Resources/VBx-LICENSE.txt"
