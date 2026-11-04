@@ -540,15 +540,17 @@ struct ContentView: View {
                 Button("취소", action: model.cancelSummary).controlSize(.small).accessibilityLabel("요약 취소")
             }
         } else {
-            let host = model.summaryAgent?.name
-            let label = model.summaryText == nil ? (host.map { $0 + "로 요약" } ?? "회의 요약 생성") : "다시 요약"
-            Button {
-                tab = "summary"
-                model.generateSummary(stored)
-            } label: { Label(label, systemImage: "sparkles") }
-                .buttonStyle(.borderedProminent).controlSize(.small)
-                .disabled(stored.meeting.status != .completed || model.summarizingID != nil)
-                .help(host.map { "이 회의의 대화록을 " + $0 + "에 보내 요약합니다." } ?? "요약 연결 설정")
+            let agent = model.summaryAgent
+            let label = model.summaryText == nil ? (agent.map { $0.name + "로 요약" } ?? "회의 요약 생성") : "다시 요약"
+            HStack(spacing: 4) {
+                if let agent { SummaryModelPicker(agent: agent, compact: true).id(agent) }
+                Button {
+                    tab = "summary"
+                    model.generateSummary(stored)
+                } label: { Label(label, systemImage: "sparkles") }
+                    .buttonStyle(.borderedProminent).controlSize(.small)
+                    .help(agent.map { "이 회의의 대화록을 " + $0.name + "에 보내 요약합니다." } ?? "요약 연결 설정")
+            }.disabled(stored.meeting.status != .completed || model.summarizingID != nil)
         }
     }
 

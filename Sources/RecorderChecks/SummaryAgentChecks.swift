@@ -14,6 +14,47 @@ extension RecorderChecks {
         try expect(SummaryAgent.connected(ids) == [.codex, .claude], "연결된 에이전트 식별 실패")
     }
 
+    func summaryModels() throws {
+        let suite = "dev.meetingrecorder.tests.summary-model." + UUID().uuidString
+        let prefs = UserDefaults(suiteName: suite)!
+        defer { prefs.removePersistentDomain(forName: suite) }
+        let home = FileManager.default.temporaryDirectory.appendingPathComponent(suite)
+        try FileManager.default.createDirectory(at: home, withIntermediateDirectories: false)
+        defer { try? FileManager.default.removeItem(at: home) }
+        let cache = home.appendingPathComponent("models_cache.json")
+        let catalog = """
+        {"models":[{"slug":"model-one","display_name":"첫 모델","visibility":"list"},
+                   {"slug":"hidden","visibility":"hide"},{"slug":"model-one","visibility":"list"},
+                   {"slug":"--help","visibility":"list"},{"slug":"model-two","visibility":"list"}]}
+        """
+        try catalog.write(to: cache, atomically: true, encoding: .utf8)
+        let visible = SummaryAgent.codex.modelOptions(codexHome: home)
+        try expect(visible.map(\.id) == ["model-one", "model-two"] && visible.first?.title == "첫 모델",
+                   "Codex 표시 모델·순서·이름이 다르거나 숨겨진 모델이 표시됨")
+        try Data("{}".utf8).write(to: cache)
+        try expect(!SummaryAgent.codex.modelOptions(codexHome: home).isEmpty, "손상된 캐시에서 대체 목록 누락")
+        try expect(SummaryAgent.claude.modelOptions().contains { $0.id == "sonnet" }, "Claude 모델 별칭 누락")
+
+        for agent in SummaryAgent.allCases {
+            try expect(agent.savedModel(in: prefs) == nil, "이전 설정에서 기본 모델 사용 실패")
+            let original = try agent.arguments(server: home, directory: home)
+            try expect(!original.contains("--model"), "기본 모델을 강제로 재정의함")
+            let id = agent == .codex ? "org/custom-v2.1" : "sonnet[1m]"
+            prefs.set(id, forKey: agent.modelPreferenceKey)
+            let selected = agent.savedModel(in: UserDefaults(suiteName: suite)!)
+            try expect(selected?.id == id, "재시작 후 선택 누락")
+            let args = try agent.arguments(server: home, directory: home, model: selected)
+            try expect(args == Array(original.dropLast()) + ["--model", id, original.last!],
+                       "모델 인수·기존 보안 옵션·입력 구분자 변경")
+        }
+        prefs.set("", forKey: SummaryAgent.codex.modelPreferenceKey)
+        try expect(SummaryAgent.codex.savedModel(in: prefs) == nil && SummaryAgent.claude.savedModel(in: prefs)?.id == "sonnet[1m]",
+                   "한 에이전트의 기본값 복원이 다른 선택을 변경함")
+        try expect(SummaryModel(" provider/claude@2026:1 ")?.id == "provider/claude@2026:1" &&
+                   ["", "--model", "a b", "a\nb", String(repeating: "a", count: 257)].allSatisfy { SummaryModel($0) == nil },
+                   "사용자 지정 모델 ID 검증 실패")
+    }
+
     func summaryPromptPreferences() throws {
         let suite = "dev.meetingrecorder.tests.summary-prompt." + UUID().uuidString
         let prefs = UserDefaults(suiteName: suite)!
@@ -102,10 +143,20 @@ extension RecorderChecks {
         try await Task.sleep(for: .milliseconds(300))
         task.cancel()
         do { try await task.value; throw CheckError.failed("취소한 작업이 성공함") } catch is CancellationError {}
+        try "#!/bin/sh\ntrap '' TERM\nexec /bin/sleep 30\n".write(to: fake, atomically: false, encoding: .utf8)
         do {
             try await SummaryAgentRunner.generate(agent: .claude, executable: fake, server: fake, root: root, meeting: target, timeout: .milliseconds(200))
             throw CheckError.failed("시간 초과 작업이 성공함")
         } catch let error as MCPError { try expect(error.localizedDescription.contains("시간"), "시간 초과 안내 누락") }
         try expect(!FileManager.default.fileExists(atPath: target.directory.appendingPathComponent("summary.md").path), "취소된 요약이 저장됨")
+        try "#!/bin/sh\necho 'model_not_found' >&2\nexit 1\n".write(to: fake, atomically: false, encoding: .utf8)
+        do {
+            try await SummaryAgentRunner.generate(agent: .codex, executable: fake, server: fake, root: root, meeting: target,
+                                                  model: SummaryModel("unavailable-model"))
+            throw CheckError.failed("지원하지 않는 모델 요청이 성공함")
+        } catch let error as MCPError {
+            try expect(error.localizedDescription.contains("unavailable-model") && error.localizedDescription.contains("다시 선택"),
+                       "모델 접근 오류가 로그인 오류로 표시됨")
+        }
     }
 }

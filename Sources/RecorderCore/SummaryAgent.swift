@@ -33,11 +33,12 @@ package enum SummaryAgent: String, CaseIterable, Identifiable, Sendable {
         return paths.first(where: fm.isExecutableFile(atPath:)).map { URL(fileURLWithPath: $0) }
     }
 
-    package func arguments(server: URL, directory: URL) throws -> [String] {
+    package func arguments(server: URL, directory: URL, model: SummaryModel? = nil) throws -> [String] {
         func json(_ object: Any) throws -> String {
             String(decoding: try JSONSerialization.data(withJSONObject: object, options: [.fragmentsAllowed, .withoutEscapingSlashes]), as: UTF8.self)
         }
         let args = ["--summary-job", directory.path]
+        let modelArguments = model.map { ["--model", $0.id] } ?? []
         switch self {
         case .codex:
             let key = "mcp_servers.meeting_summary."
@@ -46,21 +47,22 @@ package enum SummaryAgent: String, CaseIterable, Identifiable, Sendable {
                     "--disable", "shell_tool", "--disable", "apps", "--disable", "plugins",
                     "--disable", "hooks", "--disable", "memories", "--disable", "multi_agent",
                     "-c", key + "command=" + (try json(server.path)), "-c", key + "args=" + (try json(args)),
-                    "-c", key + "required=true", "-c", key + "default_tools_approval_mode=\"approve\"",
-                    "-"]
+                    "-c", key + "required=true", "-c", key + "default_tools_approval_mode=\"approve\""]
+                + modelArguments + ["-"]
         case .claude:
             let config = try json(["mcpServers": ["meeting_summary": ["command": server.path, "args": args]]])
             return ["--print", "--no-session-persistence", "--strict-mcp-config", "--mcp-config", config,
                     "--setting-sources", "", "--tools", "", "--permission-mode", "dontAsk", "--disable-slash-commands",
-                    "--allowedTools", "mcp__meeting_summary__get_transcript,mcp__meeting_summary__save_summary",
-                    "--"]
+                    "--allowedTools", "mcp__meeting_summary__get_transcript,mcp__meeting_summary__save_summary"]
+                + modelArguments + ["--"]
         }
     }
 }
 
 package enum SummaryAgentRunner {
     package static func generate(agent: SummaryAgent, executable: URL, server: URL, root: URL, meeting: StoredMeeting,
-                                 prompt: MeetingSummaryPrompt = .saved(), timeout: Duration = .seconds(600)) async throws {
+                                 prompt: MeetingSummaryPrompt = .saved(), model: SummaryModel? = nil,
+                                 timeout: Duration = .seconds(600)) async throws {
         try Task.checkCancellation()
         guard FileManager.default.isExecutableFile(atPath: server.path) else { throw MCPError.message("앱에 포함된 MCP 서버를 찾을 수 없습니다.") }
         let job = try MeetingSummaryJob(root: root, meeting: meeting, prompt: prompt)
@@ -90,7 +92,7 @@ package enum SummaryAgentRunner {
         let p = Process()
         p.executableURL = executable
         p.currentDirectoryURL = cwd
-        p.arguments = try agent.arguments(server: server, directory: dir)
+        p.arguments = try agent.arguments(server: server, directory: dir, model: model)
         var env = ProcessInfo.processInfo.environment
         let path = env["PATH"] ?? "/usr/bin:/bin"
         env["PATH"] = [executable.deletingLastPathComponent().path, path, "/opt/homebrew/bin", "/usr/local/bin"].joined(separator: ":")
@@ -118,7 +120,7 @@ package enum SummaryAgentRunner {
             }
             try Task.checkCancellation()
             drain()
-            guard p.terminationStatus == 0 else { throw failure(agent, recent: recent) }
+            guard p.terminationStatus == 0 else { throw failure(agent, model: model, recent: recent) }
             // Cancellation or a failed run can only discard a staged proposal.
             // commit rechecks both hashes under the same lock as manual MCP writes.
             try job.commit(from: dir)
@@ -126,22 +128,31 @@ package enum SummaryAgentRunner {
             if p.isRunning {
                 p.terminate()
                 await Task.detached(priority: .utility) {
-                    for _ in 0..<20 where p.isRunning { usleep(50_000) }
-                    if p.isRunning { kill(p.processIdentifier, SIGKILL) }
-                    p.waitUntilExit()
+                    // waitUntilExit can hang on a worker run loop after the child has already exited.
+                    for attempt in 0..<40 {
+                        guard p.isRunning else { return }
+                        if attempt == 20 { kill(p.processIdentifier, SIGKILL) }
+                        try? await Task.sleep(for: .milliseconds(50))
+                    }
                 }.value
             }
             throw error
         }
     }
 
-    private static func failure(_ agent: SummaryAgent, recent: Data) -> MCPError {
+    private static func failure(_ agent: SummaryAgent, model: SummaryModel?, recent: Data) -> MCPError {
         let text = String(decoding: recent, as: UTF8.self).lowercased()
         if ["not logged in", "login", "sign in", "unauthorized", "authentication", "401"].contains(where: text.contains) {
             return .message("\(agent.name)에 로그인한 뒤 다시 시도해 주세요.")
         }
         if ["rate limit", "usage limit", "quota", "429"].contains(where: text.contains) {
             return .message("\(agent.name)의 사용 한도에 도달했습니다. 한도가 갱신된 뒤 다시 시도해 주세요.")
+        }
+        if let model, ["model_not_found", "unknown model", "unsupported model", "invalid model", "model is not available",
+                       "issue with the selected model", "does not exist or you do not have access",
+                       "not supported when using codex", "do not have access to the model", "model is not allowed",
+                       "not allowed to use this model"].contains(where: text.contains) {
+            return .message("\(agent.name)에서 \(model.id) 모델을 사용할 수 없습니다. 요약 모델을 다시 선택해 주세요.")
         }
         if ["unknown option", "unexpected argument", "unrecognized", "unknown feature"].contains(where: text.contains) {
             return .message("\(agent.name) 실행기를 업데이트한 뒤 다시 시도해 주세요.")

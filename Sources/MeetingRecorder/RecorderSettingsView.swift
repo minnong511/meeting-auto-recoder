@@ -178,6 +178,7 @@ struct RecorderSettingsView: View {
                 ForEach(SummaryAgent.allCases) { Text($0.name).tag($0.rawValue) }
             }.disabled(model.summarizingID != nil)
             if let host = model.summaryAgent {
+                SummaryModelPicker(agent: host).id(host).disabled(model.summarizingID != nil)
                 HStack {
                     Text(model.summaryExecutables[host] == nil ? host.name + " 실행 파일을 찾을 수 없습니다" : host.name + " 사용")
                     Spacer()

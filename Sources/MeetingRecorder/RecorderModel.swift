@@ -879,13 +879,14 @@ final class RecorderModel: ObservableObject {
         }
         let server = Bundle.main.bundleURL.appendingPathComponent("Contents/MacOS/MeetingRecorderMCP")
         let prompt = MeetingSummaryPrompt.saved()
+        let model = agent.savedModel()
         summarizingID = stored.id
         runningSummaryAgent = agent
         summaryError = nil
         summaryTask = Task {
             defer { summarizingID = nil; runningSummaryAgent = nil; summaryTask = nil }
             do {
-                try await SummaryAgentRunner.generate(agent: agent, executable: executable, server: server, root: root, meeting: stored, prompt: prompt)
+                try await SummaryAgentRunner.generate(agent: agent, executable: executable, server: server, root: root, meeting: stored, prompt: prompt, model: model)
                 if selectedID == stored.id { summaryStamp = nil; refreshSummary() }
             } catch is CancellationError { }
             catch { summaryError = (stored.id, error.localizedDescription) }
