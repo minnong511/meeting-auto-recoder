@@ -2,7 +2,6 @@ import AVFoundation
 import CoreMedia
 import Foundation
 import RecorderCore
-import ScreenCaptureKit
 
 public struct CaptureMetrics: Sendable {
     public var microphoneLevel: Double = 0
@@ -13,31 +12,38 @@ public struct CaptureMetrics: Sendable {
     public init() {}
 }
 
-public final class CaptureService: NSObject, SCStreamOutput, SCStreamDelegate, @unchecked Sendable {
+public final class CaptureService: NSObject, AVCaptureAudioDataOutputSampleBufferDelegate, @unchecked Sendable {
+    private let control = DispatchQueue(label: "MeetingRecorder.capture-control", qos: .userInitiated)
     private let queue = DispatchQueue(label: "MeetingRecorder.capture", qos: .userInitiated)
-    private var stream: SCStream?
-    private var configuration: SCStreamConfiguration?
-    private var microphoneEnabled: Bool
+    // Device lifecycle belongs to control. Sample acceptance, clocks, writers and metrics belong to queue.
+    private var tap: ProcessAudioTap?
+    private var micSession: AVCaptureSession?
+    private var micErrorObserver: NSObjectProtocol?
+    private var micOutput: AVCaptureAudioDataOutput?
+    private var micClock: CMClock?
+    private let initialMicrophone: Bool
+    private let soundPolicy: RecordingSoundPolicy
+    private var stopped = false
     private var writers: [AudioSource: AudioChunkWriter] = [:]
     private var converters: [AudioSource: PCMConverter] = [:]
-    private var lanes: [AudioSource: SpeechLane]
+    private let lanes: [AudioSource: SpeechLane]
     private var baseTime: CMTime?
     private var metrics = CaptureMetrics()
     private var lastMeterUpdate: TimeInterval = 0
-    private var accepting = true
-    private var reportedFailure = false
+    private var accepting = false
+    private var finishing = false
+    private var failure: String?
     private let onMetrics: (CaptureMetrics) -> Void
     private let onError: (String) -> Void
 
     public init(directory: URL, lanes: [AudioSource: SpeechLane], microphoneEnabled: Bool = true,
+                soundPolicy: RecordingSoundPolicy = RecordingSoundPolicy(),
                 onChunk: @escaping (AudioChunk) -> Void,
                 onMetrics: @escaping (CaptureMetrics) -> Void,
                 onError: @escaping (String) -> Void) {
-        self.lanes = lanes
-        self.microphoneEnabled = microphoneEnabled
+        self.lanes = lanes; initialMicrophone = microphoneEnabled; self.soundPolicy = soundPolicy
         self.metrics.microphoneWasEnabled = microphoneEnabled
-        self.onMetrics = onMetrics
-        self.onError = onError
+        self.onMetrics = onMetrics; self.onError = onError
         super.init()
         let format = AVAudioFormat(standardFormatWithSampleRate: 48_000, channels: 1)!
         for source in AudioSource.allCases {
@@ -46,113 +52,133 @@ public final class CaptureService: NSObject, SCStreamOutput, SCStreamDelegate, @
         }
     }
 
-    public static func recordingContent() async throws -> SCShareableContent {
-        do {
-            return try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: true)
-        } catch {
-            let details = error as NSError
-            if details.code == -3801 {
-                throw RecorderError.message("ScreenCaptureKit이 오디오 접근을 거부했습니다 (\(details.domain), \(details.code)). 시스템 설정의 화면 및 시스템 오디오 녹음에서 Meeting Recorder를 허용하고 앱을 다시 실행해 주세요.")
+    public static func validateTarget(_ target: RecordingTarget) throws { try ProcessAudioTap.validate(target) }
+
+    public func start(target: RecordingTarget) async throws {
+        try await onControl {
+            guard self.tap == nil, !self.stopped else { throw RecorderError.message("녹음 장치를 다시 시작할 수 없습니다.") }
+            let tap = ProcessAudioTap(queue: self.control, target: target, policy: self.soundPolicy) { [weak self] message in
+                self?.queue.async { [weak self] in self?.fail(message) }
             }
-            throw RecorderError.message("시스템 오디오 접근 확인 실패 (\(details.domain), \(details.code)): \(error.localizedDescription)")
+            do {
+                try tap.start(delivery: self.queue) { [weak self] pcm, time in self?.consume(pcm, at: time, source: .system) }
+                self.tap = tap
+                if self.initialMicrophone { try self.startMicrophone() }
+                try self.queue.sync {
+                    if let failure = self.failure { throw RecorderError.message(failure) }
+                    self.accepting = true
+                }
+            } catch {
+                self.stopMicrophone()
+                tap.stop()
+                self.tap = nil
+                throw error
+            }
         }
-    }
-
-    public static func contentFilter(content: SCShareableContent, target: RecordingTarget) throws -> SCContentFilter {
-        guard let display = content.displays.first else { throw RecorderError.message("녹음할 디스플레이를 찾을 수 없습니다.") }
-        if target.isSystemAudio { return SCContentFilter(display: display, excludingWindows: []) }
-        let identities = content.applications.map { ApplicationIdentity(bundleID: $0.bundleIdentifier, processID: $0.processID) }
-        let included = try RecordingTargetPolicy.included(for: target, in: identities)
-        let pids = Set(included.map(\.processID))
-        let applications = content.applications.filter { pids.contains($0.processID) }
-        // Empty/missing selections throw above; never broaden to system audio.
-        return SCContentFilter(display: display, including: applications, exceptingWindows: [])
-    }
-
-    public func start(content: SCShareableContent, target: RecordingTarget) async throws {
-        let filter = try Self.contentFilter(content: content, target: target)
-        let configuration = SCStreamConfiguration()
-        configuration.capturesAudio = true
-        configuration.captureMicrophone = microphoneEnabled
-        configuration.microphoneCaptureDeviceID = AVCaptureDevice.default(for: .audio)?.uniqueID
-        configuration.excludesCurrentProcessAudio = true
-        configuration.sampleRate = 48_000
-        configuration.channelCount = 1
-        configuration.width = 2
-        configuration.height = 2
-        configuration.minimumFrameInterval = CMTime(seconds: 1, preferredTimescale: 1)
-        let stream = SCStream(filter: filter, configuration: configuration, delegate: self)
-        try stream.addStreamOutput(self, type: .audio, sampleHandlerQueue: queue)
-        try stream.addStreamOutput(self, type: .microphone, sampleHandlerQueue: queue)
-        self.stream = stream
-        self.configuration = configuration
-        try await stream.startCapture()
     }
 
     public func setMicrophoneEnabled(_ enabled: Bool) async throws {
-        guard let stream, let configuration else { throw RecorderError.message("녹음이 진행 중이 아닙니다.") }
-        if !enabled {
-            // Stop admitting microphone samples before waiting for the OS update.
-            await setMicrophoneGate(false)
+        try await onControl {
+            guard self.tap != nil, !self.stopped else { throw RecorderError.message("녹음이 진행 중이 아닙니다.") }
+            if enabled { try self.startMicrophone() } else { self.stopMicrophone() }
         }
-        configuration.captureMicrophone = enabled
-        try await stream.updateConfiguration(configuration)
-        if enabled { await setMicrophoneGate(true) }
     }
 
-    private func setMicrophoneGate(_ enabled: Bool) async {
-        await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
-            queue.async {
-                self.microphoneEnabled = enabled
-                if enabled { self.metrics.microphoneWasEnabled = true }
-                else {
-                    self.metrics.microphoneLevel = 0
-                    self.writers[.microphone]?.close()
-                }
-                self.onMetrics(self.metrics)
-                continuation.resume()
+    private func onControl(_ action: @escaping () throws -> Void) async throws {
+        try await withCheckedThrowingContinuation { reply in
+            control.async {
+                do { try action(); reply.resume() }
+                catch { reply.resume(throwing: error) }
             }
         }
+    }
+
+    private func startMicrophone() throws {
+        guard micSession == nil else { return }
+        guard let device = AVCaptureDevice.default(for: .audio) else { throw RecorderError.message("마이크를 찾지 못했습니다.") }
+        let session = AVCaptureSession(), input = try AVCaptureDeviceInput(device: device)
+        let output = AVCaptureAudioDataOutput()
+        session.beginConfiguration()
+        guard session.canAddInput(input) else { session.commitConfiguration(); throw RecorderError.message("마이크를 연결할 수 없습니다.") }
+        session.addInput(input)
+        guard session.canAddOutput(output) else { session.commitConfiguration(); throw RecorderError.message("마이크 입력을 받을 수 없습니다.") }
+        session.addOutput(output)
+        output.setSampleBufferDelegate(self, queue: queue)
+        session.commitConfiguration()
+        // Both the mic and the HAL tap are mapped to the same monotonic host clock.
+        queue.sync { self.micClock = session.synchronizationClock; self.micOutput = output }
+        micSession = session
+        micErrorObserver = NotificationCenter.default.addObserver(forName: AVCaptureSession.runtimeErrorNotification,
+            object: session, queue: nil) { [weak self, weak session] note in
+                let message = (note.userInfo?[AVCaptureSessionErrorKey] as? Error)?.localizedDescription ?? "마이크 연결이 끊겼습니다."
+                self?.control.async { [weak self, weak session] in
+                    guard let self, let session, self.micSession === session else { return }
+                    self.queue.async { self.fail(message) }
+                }
+            }
+        session.startRunning()
+        guard session.isRunning else { stopMicrophone(); throw RecorderError.message("마이크 녹음을 시작하지 못했습니다. 마이크 권한과 입력 장치를 확인해 주세요.") }
+        queue.sync { self.micClock = session.synchronizationClock; self.metrics.microphoneWasEnabled = true }
+    }
+
+    private func stopMicrophone() {
+        guard let session = micSession else { return }
+        micSession = nil
+        if let micErrorObserver { NotificationCenter.default.removeObserver(micErrorObserver); self.micErrorObserver = nil }
+        queue.sync {
+            self.micOutput = nil; self.micClock = nil
+            self.metrics.microphoneLevel = 0
+            self.writers[.microphone]?.close()
+            self.onMetrics(self.metrics)
+        }
+        for case let output as AVCaptureAudioDataOutput in session.outputs { output.setSampleBufferDelegate(nil, queue: nil) }
+        session.stopRunning()
     }
 
     public func stop() async -> (chunks: [AudioChunk], metrics: CaptureMetrics, error: String?) {
-        var stopError: String?
-        do { try await stream?.stopCapture() } catch { stopError = error.localizedDescription }
-        let result: ([AudioChunk], CaptureMetrics) = await withCheckedContinuation { continuation in
-            queue.async {
-                self.accepting = false
-                self.writers.values.forEach { $0.close() }
-                continuation.resume(returning: (self.writers.values.flatMap(\.chunks), self.metrics))
+        await withCheckedContinuation { reply in
+            control.async {
+                self.stopped = true
+                self.queue.sync { self.accepting = false; self.finishing = true }
+                self.stopMicrophone()
+                self.tap?.stop(); self.tap = nil
+                self.queue.async {
+                    self.writers.values.forEach { $0.close() }
+                    reply.resume(returning: (self.writers.values.flatMap(\.chunks), self.metrics, self.failure))
+                }
             }
         }
-        stream = nil
-        configuration = nil
-        return (result.0, result.1, stopError)
     }
 
-    public func stream(_ stream: SCStream, didOutputSampleBuffer sampleBuffer: CMSampleBuffer, of type: SCStreamOutputType) {
-        guard accepting, sampleBuffer.isValid else { return }
-        let source: AudioSource
-        switch type { case .audio: source = .system; case .microphone: source = .microphone; default: return }
-        guard source != .microphone || microphoneEnabled else { return }
+    public func captureOutput(_ output: AVCaptureOutput, didOutput sampleBuffer: CMSampleBuffer, from connection: AVCaptureConnection) {
+        guard accepting, output === micOutput, sampleBuffer.isValid else { return }
+        let pts = CMSampleBufferGetPresentationTimeStamp(sampleBuffer)
+        guard pts.isNumeric else { return }
+        let host = CMClockGetHostTimeClock()
+        let time = micClock.map { CMSyncConvertTime(pts, from: $0, to: host) } ?? pts
+        do { consume(try AudioBuffers.copy(sampleBuffer), at: time, source: .microphone) }
+        catch { fail(error.localizedDescription) }
+    }
+
+    private func consume(_ input: AVAudioPCMBuffer, at timestamp: CMTime, source: AudioSource) {
+        guard accepting, failure == nil, timestamp.isNumeric else { return }
         do {
-            let original = try AudioBuffers.copy(sampleBuffer)
-            let timestamp = CMSampleBufferGetPresentationTimeStamp(sampleBuffer)
-            guard timestamp.isNumeric else { return }
             if baseTime == nil { baseTime = timestamp }
             let seconds = max(0, (timestamp - baseTime!).seconds)
-            guard let pcm = try converters[source]?.convert(original) else { return }
+            guard let pcm = try converters[source]?.convert(input) else { return }
             try writers[source]?.write(pcm, at: seconds)
             try lanes[source]?.consume(pcm, at: seconds)
             let level = AudioBuffers.level(pcm)
             if source == .microphone { metrics.microphoneLevel = level; metrics.microphoneFrames += Int64(pcm.frameLength) }
             else { metrics.systemLevel = level; metrics.systemFrames += Int64(pcm.frameLength) }
-            let now = Date.timeIntervalSinceReferenceDate
+            let now = ProcessInfo.processInfo.systemUptime
             if now - lastMeterUpdate > 0.1 { lastMeterUpdate = now; onMetrics(metrics) }
-        } catch {
-            if !reportedFailure { reportedFailure = true; onError(error.localizedDescription) }
-        }
+        } catch { fail(error.localizedDescription) }
     }
 
-    public func stream(_ stream: SCStream, didStopWithError error: Error) { onError(error.localizedDescription) }
+    private func fail(_ message: String) {
+        guard !finishing, failure == nil else { return }
+        failure = message
+        if accepting { onError(message) }
+    }
 }

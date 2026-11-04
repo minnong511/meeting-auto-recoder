@@ -339,7 +339,7 @@ struct ContentView: View {
                 Text("선택한 앱 실행 필요").tag(model.selectedTargetID)
             }
             Divider()
-            Text("전체 시스템 소리").tag(RecordingTarget.systemID)
+            Text(model.excludesNotificationSounds ? "전체 시스템 소리 · 알림 앱 제외" : "전체 시스템 소리").tag(RecordingTarget.systemID)
         }.labelsHidden().frame(maxWidth: 250).disabled(model.isBusy)
     }
 

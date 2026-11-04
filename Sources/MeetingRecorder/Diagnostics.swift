@@ -17,9 +17,9 @@ enum RecorderDiagnostics {
     }
 
     static func captureContent() async throws -> Data {
-        let content = try await CaptureService.recordingContent()
-        return try JSONSerialization.data(withJSONObject: ["applicationCount": content.applications.count,
-            "meetingApps": content.applications.filter { MeetingAppKind.identify($0.bundleIdentifier) != nil }.map(\.bundleIdentifier)], options: [.sortedKeys])
+        let apps = await MeetingAppMonitor.snapshot()
+        return try JSONSerialization.data(withJSONObject: ["applicationCount": apps.count,
+            "meetingApps": apps.filter { $0.kind != nil }.map(\.bundleID), "captureBackend": "Core Audio process tap"], options: [.sortedKeys])
     }
 
     /// Deliberately records only one selected process, with the microphone off.
@@ -28,15 +28,18 @@ enum RecorderDiagnostics {
         guard let app = await MeetingAppMonitor.snapshot().first(where: { $0.bundleID == bundleID }) else {
             throw RecordingTargetError.appUnavailable(bundleID)
         }
-        let content = try await CaptureService.recordingContent()
-        let filter = try CaptureService.contentFilter(content: content, target: app.target)
+        let included = NSWorkspace.shared.runningApplications.compactMap { candidate -> String? in
+            guard let id = candidate.bundleIdentifier, MeetingAppKind.includes(id, for: app.bundleID) else { return nil }
+            return id
+        }
+        try CaptureService.validateTarget(app.target)
         let store = MeetingStore(root: root)
         var stored = try store.create(title: "앱별 오디오 수집 검증")
         stored.meeting.recordingTarget = app.target
         let capture = CaptureService(directory: stored.directory, lanes: [:], microphoneEnabled: false,
             onChunk: { _ in }, onMetrics: { _ in }, onError: { _ in })
         do {
-            try await capture.start(content: content, target: app.target)
+            try await capture.start(target: app.target)
             try await Task.sleep(for: .seconds(15))
             let result = await capture.stop()
             stored.meeting.audioChunks = result.chunks
@@ -51,7 +54,7 @@ enum RecorderDiagnostics {
             stored.meeting.endedAt = Date()
             try store.save(stored)
             return try JSONSerialization.data(withJSONObject: ["directory": stored.directory.path,
-                "includedBundleIDs": filter.includedApplications.map(\.bundleIdentifier),
+                "selectedBundleID": app.bundleID, "includedBundleIDs": Set(included).sorted(), "captureBackend": "Core Audio process tap",
                 "systemFrames": result.metrics.systemFrames, "microphoneFrames": result.metrics.microphoneFrames], options: [.sortedKeys])
         } catch {
             let result = await capture.stop()

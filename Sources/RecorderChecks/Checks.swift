@@ -64,6 +64,8 @@ enum Checks {
             ("겹친 목소리·시간 정보 없는 문장 보존", { try suite.uncertainSpeakers() }),
             ("화자 구분 실패 시 원본 조각과 시간 정보 보존", { try suite.speakerRetryRecovery() }),
             ("회의 앱 번들 인식과 보조 프로세스 범위", { try suite.meetingAppCatalog() }),
+            ("알림음 기본 제외·외부 앱·macOS 알림 서비스 범위", { try suite.notificationSoundExclusions() }),
+            ("메신저 통화 직접 선택·알림음 제외 해제", { try suite.messengerSelection() }),
             ("선택 앱만 포함하고 다른 소리는 제외", { try suite.selectedAppScope() }),
             ("대상 앱 종료·재실행 시 전체 소리로 확대 금지", { try suite.missingAppNoFallback() }),
             ("실행·마이크 감지 전환과 중복 알림 억제", { try suite.meetingDetection() }),
@@ -90,6 +92,32 @@ enum Checks {
 }
 
 final class RecorderChecks {
+    func notificationSoundExclusions() throws {
+        let policy = RecordingSoundPolicy(additionalApps: ["test.alert"])
+        for id in ["COM.TINYSPECK.SLACKMACGAP", "com.tinyspeck.slackmacgap.helper", "com.kakao.KakaoTalkMac",
+                   "com.apple.UserNotificationCenter", "com.apple.audio.systemsoundserverd", "test.alert.helper"] {
+            try expect(policy.excludes(bundleID: id), "알림 출력 누락 " + id)
+        }
+        for id in ["com.tinyspeck.slackmacgap2", "com.kakao.KakaoTalkMacBeta", "test.alerts", "us.zoom.xos", ""] {
+            try expect(!policy.excludes(bundleID: id), "서로 다른 앱까지 제외 " + id)
+        }
+        try expect(policy.excludesSystemService(at: "/usr/sbin/systemsoundserverd"), "시스템 알림음 서비스 누락")
+        try expect(!policy.excludesSystemService(at: "/Applications/Music.app/Contents/MacOS/NotificationCenter"), "서비스 경로 범위 오류")
+    }
+
+    func messengerSelection() throws {
+        let off = RecordingSoundPolicy(excludesAlerts: false, additionalApps: ["test.alert"])
+        try expect(off.excludes(bundleID: RecordingSoundPolicy.recorderID), "레코더 자신의 출력을 포함함")
+        try expect(!off.excludes(bundleID: "com.kakao.KakaoTalkMac") && !off.excludes(bundleID: "test.alert"), "해제 상태에서 여전히 음소거")
+        try expect(!off.excludesSystemService(at: "/usr/sbin/systemsoundserverd"), "해제 상태에서 시스템 알림 누락")
+        let root = "com.tinyspeck.slackmacgap"
+        let target = RecordingTarget(bundleID: root, name: "Slack", processID: 21)
+        let ids = [ApplicationIdentity(bundleID: root, processID: 21), .init(bundleID: root + ".helper", processID: 22),
+                   .init(bundleID: "com.apple.UserNotificationCenter", processID: 23)]
+        let call = try RecordingTargetPolicy.included(for: target, in: ids)
+        try expect(call.map(\.processID) == [21, 22], "직접 선택한 메신저의 통화 또는 보조 프로세스가 누락됨")
+    }
+
     func meetingDateGroups() throws {
         var calendar = Calendar(identifier: .gregorian)
         calendar.timeZone = TimeZone(secondsFromGMT: 9 * 3600)!

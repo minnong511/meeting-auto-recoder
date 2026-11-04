@@ -2,6 +2,7 @@ import AppKit
 import AVFoundation
 import Combine
 import Foundation
+import UniformTypeIdentifiers
 import RecorderAudio
 import RecorderCore
 
@@ -42,6 +43,8 @@ final class RecorderModel: ObservableObject {
     private var copyNoticeTask: Task<Void, Never>?
     private var summaryStamp: Date?
     private var summaryFile: URL?
+    @Published private(set) var excludesNotificationSounds = true
+    @Published private(set) var additionalQuietApps: [String] = []
     @Published private(set) var microphoneFanSuppression = false
     @Published private(set) var microphoneEnabled = true
     @Published private(set) var isUpdatingMicrophone = false
@@ -88,6 +91,8 @@ final class RecorderModel: ObservableObject {
 
     init(pasteboard: NSPasteboard = .general) {
         self.pasteboard = pasteboard
+        excludesNotificationSounds = UserDefaults.standard.object(forKey: "excludesNotificationSounds") as? Bool ?? true
+        additionalQuietApps = UserDefaults.standard.stringArray(forKey: "additionalQuietApps") ?? []
         if UserDefaults.standard.object(forKey: "recordingIslandEnabled") != nil {
             recordingIslandEnabled = UserDefaults.standard.bool(forKey: "recordingIslandEnabled")
         }
@@ -250,6 +255,30 @@ final class RecorderModel: ObservableObject {
         supportText = result.koreanInstalled ? selected.supportLabel : "\(selected.displayName) · 첫 녹음 시 다운로드 (\(selected.downloadDescription))"
     }
 
+    func setExcludesNotificationSounds(_ value: Bool) {
+        guard !isBusy else { return }
+        excludesNotificationSounds = value
+        UserDefaults.standard.set(value, forKey: "excludesNotificationSounds")
+    }
+
+    func addQuietApp() {
+        guard !isBusy else { return }
+        let panel = NSOpenPanel()
+        panel.allowedContentTypes = [.applicationBundle]
+        panel.directoryURL = URL(fileURLWithPath: "/Applications", isDirectory: true)
+        panel.prompt = "추가"
+        guard panel.runModal() == .OK, let url = panel.url, let id = Bundle(url: url)?.bundleIdentifier else { return }
+        guard !isBusy, !RecordingSoundPolicy(additionalApps: additionalQuietApps).excludes(bundleID: id) else { return }
+        additionalQuietApps.append(id)
+        UserDefaults.standard.set(additionalQuietApps, forKey: "additionalQuietApps")
+    }
+
+    func removeQuietApp(_ id: String) {
+        guard !isBusy else { return }
+        additionalQuietApps.removeAll { $0 == id }
+        UserDefaults.standard.set(additionalQuietApps, forKey: "additionalQuietApps")
+    }
+
     func setMicrophoneFanSuppression(_ enabled: Bool) {
         guard !isBusy else { return }
         microphoneFanSuppression = enabled
@@ -298,12 +327,9 @@ final class RecorderModel: ObservableObject {
                 guard granted else { throw RecorderError.message("마이크 권한이 필요합니다. 시스템 설정 → 개인정보 보호 및 보안 → 마이크에서 이 앱을 허용하거나 마이크 녹음을 꺼 주세요.") }
             }
             try Task.checkCancellation()
-            statusText = "시스템 오디오 접근 확인 중…"
-            // CoreGraphics preflight may disagree with ScreenCaptureKit on current
-            // macOS. Let the capture API itself authorize and validate access.
-            let content = try await CaptureService.recordingContent()
+            statusText = "녹음 대상 확인 중…"
             guard let target = activeTarget else { throw RecorderError.message("녹음할 앱을 선택해 주세요.") }
-            _ = try CaptureService.contentFilter(content: content, target: target)
+            try CaptureService.validateTarget(target)
             try Task.checkCancellation()
             statusText = "음성 인식 모델 준비 중…"
             let progress: @Sendable (String) -> Void = { [weak self] message in
@@ -369,16 +395,14 @@ final class RecorderModel: ObservableObject {
             }
             try Task.checkCancellation()
             let capture = CaptureService(directory: stored.directory, lanes: lanes, microphoneEnabled: microphoneEnabled,
+                soundPolicy: RecordingSoundPolicy(excludesAlerts: excludesNotificationSounds, additionalApps: additionalQuietApps),
                 onChunk: { [weak self] chunk in Task { @MainActor in self?.receive(chunk, meetingID: stored.id) } },
                 onMetrics: { [weak self] metrics in Task { @MainActor in self?.metrics = metrics } },
                 onError: { [weak self] error in Task { @MainActor in await self?.captureFailed(error, meetingID: stored.id) } })
             self.capture = capture
             statusText = "\(target.name) 소리 연결 중…"
-            // Model preparation may take time; revalidate the selected process
-            // against current shareable apps immediately before capture begins.
-            let currentContent = try await CaptureService.recordingContent()
-            try Task.checkCancellation()
-            try await capture.start(content: currentContent, target: target)
+            // The audio tap rechecks the selected process immediately before attaching.
+            try await capture.start(target: target)
             try Task.checkCancellation()
             activeStartedAt = Date()
             phase = .recording
@@ -452,7 +476,6 @@ final class RecorderModel: ObservableObject {
 
     private func captureFailed(_ error: String, meetingID: UUID) async {
         guard current?.id == meetingID, phase == .recording else { return }
-        current?.meeting.warnings.append("오디오 입력 오류: \(error)")
         await stop()
         errorMessage = error
     }

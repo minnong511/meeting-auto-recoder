@@ -111,7 +111,6 @@ private final class RecordingIslandHelperController: NSObject {
         // isVisible can stay true while WindowServer moves to another Space.
         // Reorder without activating the app, both now and after the transition.
         for name in [NSWorkspace.activeSpaceDidChangeNotification,
-                     NSWorkspace.didActivateApplicationNotification,
                      NSWorkspace.screensDidWakeNotification] {
             sessionObservers.append(workspaceCenter.addObserver(
                 forName: name, object: nil, queue: .main
@@ -186,7 +185,8 @@ private final class RecordingIslandHelperController: NSObject {
             window.animationBehavior = .none
             window.hidesOnDeactivate = false
             window.isReleasedWhenClosed = false
-            window.level = .screenSaver
+            // Keep system banners above the nonactivating notch panel.
+            window.level = .statusBar
             window.collectionBehavior = [.canJoinAllSpaces, .canJoinAllApplications, .fullScreenAuxiliary, .stationary, .ignoresCycle]
             window.contentView = IslandPanelContentView(state: state)
             panel = window

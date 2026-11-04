@@ -10,6 +10,7 @@ struct RecorderSettingsView: View {
     @ObservedObject var model: RecorderModel
     @Environment(\.dismiss) private var dismiss
     @State private var showsConnectionDetails = false
+    @State private var showsQuietApps = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -63,6 +64,23 @@ struct RecorderSettingsView: View {
         }
         ReleaseSettings(updates: model.updates, toggle: model.setUpdateNotifications)
         Section("녹음") {
+            Toggle("녹음에서 알림음 제외", isOn: Binding(get: { model.excludesNotificationSounds }, set: model.setExcludesNotificationSounds))
+                .disabled(model.isBusy)
+            if model.excludesNotificationSounds {
+                DisclosureGroup("전체 시스템 소리에서 제외할 앱", isExpanded: $showsQuietApps) {
+                    Text("macOS 알림 · Slack · 카카오톡").font(.callout)
+                    ForEach(model.additionalQuietApps, id: \.self) { id in
+                        HStack {
+                            Text(NSWorkspace.shared.urlForApplication(withBundleIdentifier: id)?.deletingPathExtension().lastPathComponent ?? id)
+                            Spacer()
+                            Button("제거") { model.removeQuietApp(id) }.disabled(model.isBusy)
+                        }
+                    }
+                    Button("다른 앱 추가…", action: model.addQuietApp).disabled(model.isBusy)
+                    Text("전체 시스템 녹음에서는 목록에 있는 앱의 통화도 제외됩니다. 해당 앱을 직접 선택하면 통화와 앱 자체 알림음이 함께 녹음될 수 있습니다.")
+                        .font(.caption).foregroundStyle(.secondary)
+                }
+            }
             Toggle("노치에 녹음 상태 표시", isOn: Binding(get: { model.recordingIslandEnabled }, set: model.setRecordingIslandEnabled))
             Toggle("회의 앱 감지 알림", isOn: Binding(get: { model.meetingNotificationsEnabled }, set: model.setMeetingNotifications))
             Text(model.notificationStatus).font(.caption).foregroundStyle(.secondary)

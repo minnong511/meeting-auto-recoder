@@ -2,6 +2,7 @@ import CoreAudio
 import Foundation
 
 public struct AudioProcessActivity: Codable, Sendable {
+    let objectID: AudioObjectID?
     public let processID: Int32
     public let bundleID: String
     public let inputActive: Bool?
@@ -29,7 +30,7 @@ public enum AudioActivityReader {
         guard status == noErr else { return AudioActivitySnapshot(available: false, processes: []) }
         let processes = ids.prefix(Int(size) / MemoryLayout<AudioObjectID>.size).compactMap { id -> AudioProcessActivity? in
             guard let pid = number(id, kAudioProcessPropertyPID) else { return nil }
-            return AudioProcessActivity(processID: Int32(bitPattern: pid), bundleID: string(id, kAudioProcessPropertyBundleID) ?? "",
+            return AudioProcessActivity(objectID: id, processID: Int32(bitPattern: pid), bundleID: string(id, kAudioProcessPropertyBundleID) ?? "",
                 inputActive: number(id, kAudioProcessPropertyIsRunningInput).map { $0 != 0 },
                 outputActive: number(id, kAudioProcessPropertyIsRunningOutput).map { $0 != 0 })
         }

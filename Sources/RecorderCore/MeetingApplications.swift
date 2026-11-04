@@ -22,13 +22,16 @@ public enum MeetingAppKind: String, Codable, CaseIterable, Sendable {
     public static func includes(_ candidate: String, for selected: String) -> Bool {
         let id = candidate.lowercased(), root = selected.lowercased()
         if id == root || id.hasPrefix(root + ".") { return true }
-        let helpers: [String]
-        switch root {
-        case "us.zoom.xos": helpers = ["us.zoom.cpthost", "us.zoom.aomhost", "us.zoom.zoomcefhelper"]
-        case "cisco-systems.spark": helpers = ["com.cisco.wme.audiowmebridge"]
-        default: helpers = []
+        return helperBundleIDs(for: root).contains { id == $0 || id.hasPrefix($0 + ".") }
+    }
+
+    public static func helperBundleIDs(for bundleID: String) -> [String] {
+        switch bundleID.lowercased() {
+        case "us.zoom.xos": return ["us.zoom.cpthost", "us.zoom.aomhost", "us.zoom.zoomcefhelper"]
+        case "cisco-systems.spark": return ["com.cisco.wme.audiowmebridge"]
+        case "com.tinyspeck.slackmacgap": return ["com.tinyspeck.slackmacgap.helper"]
+        default: return []
         }
-        return helpers.contains { id == $0 || id.hasPrefix($0 + ".") }
     }
 }
 
