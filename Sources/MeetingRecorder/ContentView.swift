@@ -772,12 +772,12 @@ private struct RecorderSettingsView: View {
                 Section {
                     Picker("음성 인식 모델", selection: Binding(get: { model.speechModel }, set: model.selectSpeechModel)) {
                         ForEach(SpeechModel.allCases) { speechModel in
-                            Text(speechModel.displayName).tag(speechModel)
+                            Text(speechModel.displayName + (speechModel == .recommended ? " · 권장" : "")).tag(speechModel)
                         }
                     }.disabled(model.isBusy)
                     Text(model.speechModel.downloadDescription + " · 선택한 모델은 첫 녹음 시 준비합니다.")
                         .font(.caption).foregroundStyle(.secondary)
-                    Text("작은 모델은 빠르고 공간을 적게 쓸 수 있지만 한국어 인식 정확도가 낮아질 수 있습니다.")
+                    Text("고유명사 인식은 권장 모델을, 빠른 자막 확정은 Turbo를 선택하세요.")
                         .font(.caption).foregroundStyle(.secondary)
                     Text("녹음 중 확정된 문장을 그대로 저장합니다. 종료할 때는 마지막 미확정 문장만 마무리합니다.")
                         .font(.caption).foregroundStyle(.secondary)

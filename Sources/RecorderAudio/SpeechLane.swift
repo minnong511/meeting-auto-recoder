@@ -4,14 +4,19 @@ import Foundation
 import RecorderCore
 import WhisperKit
 
-/// Only multilingual Whisper models are offered: `.en` variants cannot transcribe Korean.
+/// Local speech models that can transcribe Korean.
 public enum SpeechModel: String, CaseIterable, Codable, Sendable, Identifiable {
     case largeV3Turbo = "large-v3-turbo"
+    case largeV3TurboFP16 = "large-v3-turbo-fp16"
+    case largeV3 = "large-v3"
     case small, base, tiny
+    public static let recommended: Self = .largeV3
     public var id: String { rawValue }
     public var variant: String {
         switch self {
         case .largeV3Turbo: return "openai_whisper-large-v3-v20240930_626MB"
+        case .largeV3TurboFP16: return "openai_whisper-large-v3-v20240930_turbo"
+        case .largeV3: return "openai_whisper-large-v3_947MB"
         case .small: return "openai_whisper-small"
         case .base: return "openai_whisper-base"
         case .tiny: return "openai_whisper-tiny"
@@ -20,6 +25,8 @@ public enum SpeechModel: String, CaseIterable, Codable, Sendable, Identifiable {
     public var displayName: String {
         switch self {
         case .largeV3Turbo: return "Whisper large-v3-turbo"
+        case .largeV3TurboFP16: return "Whisper large-v3-turbo FP16"
+        case .largeV3: return "Whisper large-v3"
         case .small: return "Whisper small"
         case .base: return "Whisper base"
         case .tiny: return "Whisper tiny"
@@ -29,6 +36,8 @@ public enum SpeechModel: String, CaseIterable, Codable, Sendable, Identifiable {
         let size: String
         switch self {
         case .largeV3Turbo: size = "약 627 MB"
+        case .largeV3TurboFP16: size = "약 1.64 GB"
+        case .largeV3: size = "약 948 MB"
         case .small: size = "약 487 MB"
         case .base: size = "약 147 MB"
         case .tiny: size = "약 77 MB"
@@ -40,33 +49,33 @@ public enum SpeechModel: String, CaseIterable, Codable, Sendable, Identifiable {
 }
 
 public struct SpeechSupport: Codable, Sendable {
-    public static let supportLabel = SpeechModel.largeV3Turbo.supportLabel
-    public static let engineDescription = "WhisperKit · large-v3-v20240930_626MB · ko · live-only"
+    public static let supportLabel = SpeechModel.recommended.supportLabel
+    public static let engineDescription = SpeechModel.recommended.engineDescription
     public var engineAvailable: Bool
     public var koreanSupported: Bool
     public var koreanInstalled: Bool
     public var supportedLocales: [String]
     public var engine = "WhisperKit"
-    public var model = SpeechModel.largeV3Turbo.variant
-    public var cachePath = WhisperEngine.cacheRoot.path
+    public var model = SpeechModel.recommended.variant
+    public var cachePath = LocalSpeechEngine.cacheRoot.path
     public var transcriptionMode = "live-only"
     public var postProcessingEnabled = false
 
-    public static func inspect(model: SpeechModel = .largeV3Turbo) async -> SpeechSupport {
-        await inspect(model: model, cacheRoot: WhisperEngine.cacheRoot)
+    public static func inspect(model: SpeechModel = .recommended) async -> SpeechSupport {
+        await inspect(model: model, cacheRoot: LocalSpeechEngine.cacheRoot)
     }
     public static func inspect(model: SpeechModel, cacheRoot: URL) async -> SpeechSupport {
-        let path = try? String(contentsOf: WhisperEngine.readyMarker(for: model, cacheRoot: cacheRoot), encoding: .utf8)
+        let path = try? String(contentsOf: LocalSpeechEngine.readyMarker(for: model, cacheRoot: cacheRoot), encoding: .utf8)
         return SpeechSupport(engineAvailable: true, koreanSupported: true,
-            koreanInstalled: path.map { WhisperEngine.validModelFolder(URL(fileURLWithPath: $0), model: model) } ?? false,
+            koreanInstalled: path.map { LocalSpeechEngine.validModelFolder(URL(fileURLWithPath: $0), model: model) } ?? false,
             supportedLocales: ["ko-KR"], model: model.variant, cachePath: cacheRoot.path)
     }
 }
 
 /// Both inputs share one model. The explicit permit also serializes calls that
 /// suspend inside Core ML; actor isolation alone would allow reentrant decoding.
-private actor WhisperEngine {
-    static let shared = WhisperEngine()
+private actor LocalSpeechEngine {
+    static let shared = LocalSpeechEngine()
     static let cacheRoot = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0]
         .appendingPathComponent("MeetingRecorder/Whisper", isDirectory: true)
     static func readyMarker(for model: SpeechModel, cacheRoot: URL) -> URL {
@@ -75,14 +84,20 @@ private actor WhisperEngine {
     private var kit: WhisperKit?
     private var loadedModel: SpeechModel?
     private var busy = false
-    private var waiters: [CheckedContinuation<Void, Never>] = []
-    private func acquire() async {
-        if busy { await withCheckedContinuation { waiters.append($0) } }
+    private var required: [CheckedContinuation<Void, Never>] = []
+    private var previews: [CheckedContinuation<Void, Never>] = []
+    private func acquire(required isRequired: Bool = true) async {
+        if busy {
+            await withCheckedContinuation { continuation in
+                if isRequired { required.append(continuation) } else { previews.append(continuation) }
+            }
+        }
         else { busy = true }
     }
     private func release() {
-        if waiters.isEmpty { busy = false }
-        else { waiters.removeFirst().resume() }
+        if !required.isEmpty { required.removeFirst().resume() }
+        else if !previews.isEmpty { previews.removeFirst().resume() }
+        else { busy = false }
     }
 
     func prepare(model: SpeechModel, progress: @escaping @Sendable (String) -> Void) async throws {
@@ -127,7 +142,7 @@ private actor WhisperEngine {
         }
     }
     func transcribe(_ request: WhisperAudioWindow.Request, wordTimestamps: Bool) async throws -> [TranscriptionSegment] {
-        await acquire()
+        await acquire(required: request.isFinal)
         defer { release() }
         try Task.checkCancellation()
         guard let kit else { throw RecorderError.message("Whisper 모델이 준비되지 않았습니다.") }
@@ -209,6 +224,38 @@ public struct WhisperTranscriptMapper {
     }
 }
 
+/// Alternate local decoders can be compared by package experiments using the same
+/// capture, endpointing and commit path as the app. Only Whisper ships in the app.
+public struct LiveSpeechDecoder: Sendable {
+    public static let whisper = LiveSpeechDecoder(utterance: nil)
+    fileprivate let utterance: (@Sendable ([Float]) async throws -> String)?
+    package init(utterance: (@Sendable ([Float]) async throws -> String)?) { self.utterance = utterance }
+
+    fileprivate func transcribe(_ request: WhisperAudioWindow.Request, wordTimestamps: Bool) async throws -> [TranscriptionSegment] {
+        if let utterance {
+            let text = try await utterance(request.samples)
+            return [TranscriptionSegment(start: 0, end: Float(request.samples.count) / 16_000, text: text)]
+        }
+        return try await LocalSpeechEngine.shared.transcribe(request, wordTimestamps: wordTimestamps)
+    }
+}
+
+/// The capture queue keeps moving while decoding suspends. Obsolete previews must
+/// never delay a final; use the audio clock so file replay and live input agree.
+package final class LivePreviewPolicy: @unchecked Sendable {
+    private let lock = NSLock()
+    private var receivedThrough = -Double.infinity
+    package init() {}
+    package func received(through time: Double) {
+        lock.withLock { receivedThrough = max(receivedThrough, time) }
+    }
+    package func shouldDecode(final: Bool, isSpeech: Bool?, end: Double) -> Bool {
+        if final { return true }
+        if isSpeech == false { return false }
+        return lock.withLock { receivedThrough - end <= 0.5 }
+    }
+}
+
 public final class SpeechLane {
     private enum Input {
         case audio([Float], Double)
@@ -218,28 +265,55 @@ public final class SpeechLane {
     private let converter = PCMConverter(outputFormat: AVAudioFormat(standardFormatWithSampleRate: 16_000, channels: 1)!)
     private let continuation: AsyncStream<Input>.Continuation
     private var resultTask: Task<Void, Error>?
+    private let previewPolicy = LivePreviewPolicy()
     private var nextInputTime: Double?
     private init(source: AudioSource, continuation: AsyncStream<Input>.Continuation) {
         self.source = source
         self.continuation = continuation
     }
-    public static func prepareAssets(model: SpeechModel = .largeV3Turbo, progress: @escaping @Sendable (String) -> Void = { _ in }) async throws {
-        try await WhisperEngine.shared.prepare(model: model, progress: progress)
+    package static func prepareVoiceDetector() async throws {
+        try await SpeechActivityDetector.shared.prepare()
     }
-    public static func releaseAssets() async { await WhisperEngine.shared.unload() }
+
+    @discardableResult public static func prepareAssets(model: SpeechModel = .recommended, segmentation: SpeechSegmentation = .voiceActivity,
+                              allowEnergyFallback: Bool = false, progress: @escaping @Sendable (String) -> Void = { _ in }) async throws -> SpeechSegmentation {
+        var effective = segmentation
+        if segmentation == .voiceActivity {
+            progress("말소리 감지 모델 준비 중…")
+            do { try await prepareVoiceDetector() }
+            catch {
+                try Task.checkCancellation()
+                guard allowEnergyFallback else { throw error }
+                effective = .energy
+                progress("말소리 감지 모델을 준비하지 못해 기본 감지로 계속합니다.")
+            }
+        }
+        try await LocalSpeechEngine.shared.prepare(model: model, progress: progress)
+        return effective
+    }
+    public static func releaseAssets() async {
+        await LocalSpeechEngine.shared.unload()
+        await SpeechActivityDetector.shared.unload()
+    }
 
     public static func create(source: AudioSource, emitPartials: Bool = true,
+                              segmentation: SpeechSegmentation = .voiceActivity, silenceDuration: Double? = nil, speechThreshold: Float = 0.5,
+                              decoder: LiveSpeechDecoder = .whisper, skipObsoletePreviews: Bool = true,
                               onResult: @escaping @MainActor (TranscriptSegment, Bool) -> Void,
                               onError: @escaping (String) -> Void,
                               onWarning: @escaping @MainActor (String) -> Void = { _ in }) async throws -> SpeechLane {
+        let alignedWords = decoder.utterance == nil
         let (stream, continuation) = AsyncStream<Input>.makeStream(bufferingPolicy: .bufferingOldest(1024))
         let lane = SpeechLane(source: source, continuation: continuation)
+        let previews = lane.previewPolicy
         lane.resultTask = Task {
-            var window = WhisperAudioWindow()
+            var window = WhisperAudioWindow(silenceDuration: silenceDuration ?? (segmentation == .energy ? 0.8 : 0.6),
+                maximumDuration: alignedWords ? 24 : 30, retainedTailSeconds: alignedWords ? 8 : 0)
+            var activity = SpeechActivityBuffer(threshold: speechThreshold)
             var mapper = WhisperTranscriptMapper()
             var failure: Error?
             func decode(_ request: WhisperAudioWindow.Request) async throws {
-                let result = try await WhisperEngine.shared.transcribe(request,
+                let result = try await decoder.transcribe(request,
                     wordTimestamps: request.isFinal || mapper.committedThrough > request.start)
                 let before = mapper.committedThrough
                 let segment = mapper.map(result, request: request, source: source)
@@ -261,6 +335,17 @@ public final class SpeechLane {
                 }
                 await onResult(segment, request.isFinal)
             }
+            func appendWindow(_ samples: [Float], at start: Double, isSpeech: Bool? = nil) async throws {
+                for request in window.append(samples, at: start, isSpeech: isSpeech) where request.isFinal || emitPartials {
+                    if skipObsoletePreviews && segmentation == .voiceActivity && !previews.shouldDecode(final: request.isFinal, isSpeech: isSpeech, end: request.end) { continue }
+                    try await decode(request)
+                }
+            }
+            func flushActivity() async throws {
+                if segmentation == .voiceActivity, let tail = try await activity.finish() {
+                    try await appendWindow(tail.samples, at: tail.start, isSpeech: tail.isSpeech)
+                }
+            }
             for await input in stream {
                 if Task.isCancelled || failure != nil {
                     if case let .barrier(reply, _) = input { reply.resume(throwing: failure ?? CancellationError()) }
@@ -269,12 +354,17 @@ public final class SpeechLane {
                 do {
                     switch input {
                     case let .audio(samples, start):
-                        for request in window.append(samples, at: start) where request.isFinal || emitPartials {
-                            try await decode(request)
-                        }
+                        if segmentation == .voiceActivity {
+                            for block in try await activity.append(samples, at: start) {
+                                try await appendWindow(block.samples, at: block.start, isSpeech: block.isSpeech)
+                            }
+                        } else { try await appendWindow(samples, at: start) }
                     case let .barrier(reply, finalize):
                         do {
-                            if finalize, let request = window.finish() { try await decode(request) }
+                            if finalize {
+                                try await flushActivity()
+                                if let request = window.finish() { try await decode(request) }
+                            }
                             reply.resume()
                         } catch { reply.resume(throwing: error); throw error }
                     }
@@ -284,8 +374,11 @@ public final class SpeechLane {
                     if !(error is CancellationError) { onError(error.localizedDescription) }
                 }
             }
-            if !Task.isCancelled && failure == nil, let request = window.finish() {
-                do { try await decode(request) }
+            if !Task.isCancelled && failure == nil {
+                do {
+                    try await flushActivity()
+                    if let request = window.finish() { try await decode(request) }
+                }
                 catch { failure = error; if !(error is CancellationError) { onError(error.localizedDescription) } }
             }
             if let failure { throw failure }
@@ -298,12 +391,14 @@ public final class SpeechLane {
     public func consume(_ buffer: AVAudioPCMBuffer, at seconds: Double) throws {
         guard let converted = try converter.convert(buffer), let data = converted.floatChannelData?[0] else { return }
         let start = nextInputTime.map { seconds - $0 < 0.1 ? $0 : seconds } ?? seconds
-        nextInputTime = start + Double(converted.frameLength) / 16_000
+        let end = start + Double(converted.frameLength) / 16_000
+        nextInputTime = end
+        previewPolicy.received(through: end)
         for offset in stride(from: 0, to: Int(converted.frameLength), by: 320) {
             let count = min(320, Int(converted.frameLength) - offset)
             let samples = Array(UnsafeBufferPointer(start: data + offset, count: count))
             if case .dropped = continuation.yield(.audio(samples, start + Double(offset) / 16_000)) {
-                throw RecorderError.message("Whisper 전사가 입력을 따라가지 못했습니다. 원본 오디오는 복구용으로 보존합니다.")
+                throw RecorderError.message("실시간 전사가 입력을 따라가지 못했습니다. 원본 오디오는 복구용으로 보존합니다.")
             }
         }
     }

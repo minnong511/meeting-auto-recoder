@@ -1,0 +1,1148 @@
+{
+  "dataset": "google/fleurs",
+  "config": "ko_kr",
+  "revision": "70bb2e84b976b7e960aa89f1c648e09c59f894dd",
+  "license": "CC-BY-4.0",
+  "selection": "Exclude all v1 text groups; SHA256(recorder-accuracy-v2:text_id); first 12 dev and next 32 test; one recording per text group by SHA256(audio:filename).",
+  "non_speech": "12 deterministic synthetic zero/hiss/hum/click clips, seed 20261104; no human speech.",
+  "latency_definition": "Two paired references: last nonempty final event minus the pre-annotated acoustic speech end (estimate), and minus the original file boundary (may be negative; not an exact speech end).",
+  "selection_rule": "Use dev for settings. Compare frozen test: prioritize non-speech false output and corpus CER, then annotated names/numbers and finalization latency. Report tradeoffs; do not claim a universal winner.",
+  "samples": [
+    {
+      "id": "1524592754713199821",
+      "text_id": "1683",
+      "duration": 20.82,
+      "split": "dev",
+      "kind": "speech",
+      "names": [],
+      "numbers": [],
+      "sha256": "85c229f435ec287ff6cdc1a8ebfdd88bd13e3d4bb1d4746a5528346bf84f6867"
+    },
+    {
+      "id": "9827745168708949809",
+      "text_id": "1752",
+      "duration": 10.38,
+      "split": "dev",
+      "kind": "speech",
+      "names": [],
+      "numbers": [],
+      "sha256": "1823fcca0c2ec41376c0eab0fc44b323a2adf37393844ad85a16bb47dd06ef6f"
+    },
+    {
+      "id": "10883663525312342842",
+      "text_id": "1708",
+      "duration": 17.52,
+      "split": "dev",
+      "kind": "speech",
+      "names": [],
+      "numbers": [],
+      "sha256": "e75f4c240908c754d8dadaf66dadebb25a02ab6c833a7824c509870a2c13a239"
+    },
+    {
+      "id": "8654103173862557647",
+      "text_id": "1799",
+      "duration": 12.0,
+      "split": "dev",
+      "kind": "speech",
+      "names": [],
+      "numbers": [],
+      "sha256": "4c60c80a73fc0a3f220e5a8a21b928d03f4e825308b108568525bc5eb876b2a1"
+    },
+    {
+      "id": "8220041695631130344",
+      "text_id": "1678",
+      "duration": 18.42,
+      "split": "dev",
+      "kind": "speech",
+      "names": [],
+      "numbers": [],
+      "sha256": "71dda45eafb5a07106de47cb54b35c3adedc216f1991f6048902b90fd14663d3"
+    },
+    {
+      "id": "5725159623319486114",
+      "text_id": "1960",
+      "duration": 17.16,
+      "split": "dev",
+      "kind": "speech",
+      "names": [],
+      "numbers": [],
+      "sha256": "23686bf764324bf3e261fa5e7b7540d2eb7649df6018bcc0aad4be65cbde7c17"
+    },
+    {
+      "id": "7400565495284565775",
+      "text_id": "1992",
+      "duration": 13.68,
+      "split": "dev",
+      "kind": "speech",
+      "names": [],
+      "numbers": [],
+      "sha256": "aa3e719e72206430290b31c78f5245b1d05543cbbe37aa93d691e7c0f378407d"
+    },
+    {
+      "id": "12822450452598008094",
+      "text_id": "1744",
+      "duration": 11.1,
+      "split": "dev",
+      "kind": "speech",
+      "names": [],
+      "numbers": [],
+      "sha256": "35e24a816569a2b1e84c6cf4aa2ada151c6f53096514d8f72ae0ba35cfb52031"
+    },
+    {
+      "id": "9148758899557241186",
+      "text_id": "1760",
+      "duration": 14.58,
+      "split": "dev",
+      "kind": "speech",
+      "names": [],
+      "numbers": [],
+      "sha256": "f34df0b5fc1a35a63772beb09725420e3073526416fb9be22115455ac7c93fa0"
+    },
+    {
+      "id": "12120768976986875668",
+      "text_id": "1707",
+      "duration": 6.78,
+      "split": "dev",
+      "kind": "speech",
+      "names": [],
+      "numbers": [],
+      "sha256": "617f121fb2f9d025d3fd6d36b7004c7fc7905b0c86b158e4b56721c35fd070b7"
+    },
+    {
+      "id": "5107070363507584970",
+      "text_id": "1677",
+      "duration": 8.46,
+      "split": "dev",
+      "kind": "speech",
+      "names": [],
+      "numbers": [],
+      "sha256": "056fd2b26beb63c05e035ff37ecbe9ed26d8e2933d32d2f9f8c0c00fcca50722"
+    },
+    {
+      "id": "14776300512680192741",
+      "text_id": "1826",
+      "duration": 7.32,
+      "split": "dev",
+      "kind": "speech",
+      "names": [],
+      "numbers": [],
+      "sha256": "c867ea643ef5f9e833801ec3d1b07d8fa85b7c309f2103bb6db901828d651df3"
+    },
+    {
+      "id": "12283368537894545309",
+      "text_id": "1887",
+      "duration": 11.1,
+      "split": "test",
+      "kind": "speech",
+      "names": [
+        [
+          "리긴스"
+        ]
+      ],
+      "numbers": [],
+      "sha256": "05307ffb61a9537d78c637652b148ed711a94a93fdbce3762486fa5a3c52c60b",
+      "speech_end_estimate": 8.36
+    },
+    {
+      "id": "16934728481000691254",
+      "text_id": "1684",
+      "duration": 6.9,
+      "split": "test",
+      "kind": "speech",
+      "names": [
+        [
+          "아피아"
+        ],
+        [
+          "사모아"
+        ],
+        [
+          "우폴루"
+        ]
+      ],
+      "numbers": [
+        [
+          "4만 명",
+          "사만 명",
+          "40000명"
+        ]
+      ],
+      "sha256": "ff61313d0937fb09a5d010c1462c95d366b1175829b672721fcfd138c44544b4",
+      "speech_end_estimate": 6.24
+    },
+    {
+      "id": "4146578248356287830",
+      "text_id": "1748",
+      "duration": 6.9,
+      "split": "test",
+      "kind": "speech",
+      "names": [],
+      "numbers": [
+        [
+          "11시",
+          "열한시",
+          "십일시"
+        ],
+        [
+          "35분",
+          "삼십오분"
+        ]
+      ],
+      "sha256": "756d3b957f74a5549c5c8230f2e34a41ef0e7f3b8ee698b0fe34e19c322827b9",
+      "speech_end_estimate": 5.46
+    },
+    {
+      "id": "12195093133167599866",
+      "text_id": "1682",
+      "duration": 9.54,
+      "split": "test",
+      "kind": "speech",
+      "names": [],
+      "numbers": [
+        [
+          "75.6cm",
+          "75.6센티미터",
+          "칠십오점육센티미터"
+        ],
+        [
+          "62.2cm",
+          "62.2센티미터",
+          "육십이점이센티미터"
+        ]
+      ],
+      "sha256": "4facd42b6682939101b3ff7e4aff0de3e8d8588ff1155186c754f04e7641882a",
+      "speech_end_estimate": 7.4
+    },
+    {
+      "id": "2542184306576258449",
+      "text_id": "1738",
+      "duration": 15.72,
+      "split": "test",
+      "kind": "speech",
+      "names": [
+        [
+          "티라노사우르스"
+        ]
+      ],
+      "numbers": [],
+      "sha256": "da9b370fb86fc4c9be49548fd83bc5f3a05474ad3e11398ce8436f9452c98d55",
+      "speech_end_estimate": 12.8
+    },
+    {
+      "id": "10674428304946245757",
+      "text_id": "1765",
+      "duration": 15.36,
+      "split": "test",
+      "kind": "speech",
+      "names": [
+        [
+          "아순시온"
+        ],
+        [
+          "파라과이"
+        ]
+      ],
+      "numbers": [
+        [
+          "1537년",
+          "천오백삼십칠년"
+        ]
+      ],
+      "sha256": "c2c33f602e02092f3e9d1246811147861d6fa55feeb962f3f1b835f47f47de10",
+      "speech_end_estimate": 11.7
+    },
+    {
+      "id": "1737922164151034267",
+      "text_id": "1877",
+      "duration": 14.7,
+      "split": "test",
+      "kind": "speech",
+      "names": [
+        [
+          "크리스티나 페르난데스 데 키르치네르"
+        ],
+        [
+          "부에노스아이레스"
+        ],
+        [
+          "라 플라타"
+        ]
+      ],
+      "numbers": [
+        [
+          "50km",
+          "50킬로미터",
+          "오십킬로미터"
+        ]
+      ],
+      "sha256": "534de090374919a072a5863f6ca95a668690a81a12d32f9cea3b56c1b5b7a168",
+      "speech_end_estimate": 13.9
+    },
+    {
+      "id": "8380061103104689086",
+      "text_id": "1764",
+      "duration": 10.02,
+      "split": "test",
+      "kind": "speech",
+      "names": [
+        [
+          "성 베드로"
+        ]
+      ],
+      "numbers": [],
+      "sha256": "d1b5c1583754c8ede729de9e013adf9451246c78b0e718498ab48a0b52dcce17",
+      "speech_end_estimate": 7.9
+    },
+    {
+      "id": "1144276032055203360",
+      "text_id": "1866",
+      "duration": 11.28,
+      "split": "test",
+      "kind": "speech",
+      "names": [],
+      "numbers": [],
+      "sha256": "e438edeca4aa40ef1a3faf5b2de01af63693d27f2eb5343309e156c3faa3c98f"
+    },
+    {
+      "id": "7286609527128331201",
+      "text_id": "1809",
+      "duration": 18.0,
+      "split": "test",
+      "kind": "speech",
+      "names": [],
+      "numbers": [],
+      "sha256": "4f73a955ea3b42e6be2c478892337e4b4ad07c4730431e04c2bee4885502c73a"
+    },
+    {
+      "id": "15582973794094176744",
+      "text_id": "1949",
+      "duration": 6.6,
+      "split": "test",
+      "kind": "speech",
+      "names": [],
+      "numbers": [],
+      "sha256": "b55b97b055c2c000930419434997f7e5d45a109b253d3daca5247b82e9cc5a06"
+    },
+    {
+      "id": "14031701654853178576",
+      "text_id": "1733",
+      "duration": 18.24,
+      "split": "test",
+      "kind": "speech",
+      "names": [
+        [
+          "이라크"
+        ]
+      ],
+      "numbers": [
+        [
+          "78개",
+          "칠십팔개"
+        ]
+      ],
+      "sha256": "e0392b32a655b1efca2a253ae94b5bcd741a2c42caf4192464496b98484df1c7"
+    },
+    {
+      "id": "14266303603009589328",
+      "text_id": "1699",
+      "duration": 16.08,
+      "split": "test",
+      "kind": "speech",
+      "names": [
+        [
+          "비슈케크"
+        ]
+      ],
+      "numbers": [],
+      "sha256": "4e521dbe3cc5be7bfc606d834fe51e2f6339b8abc43ef383a73f7758f431bb1d"
+    },
+    {
+      "id": "1349707985488043163",
+      "text_id": "1947",
+      "duration": 11.52,
+      "split": "test",
+      "kind": "speech",
+      "names": [
+        [
+          "아이티"
+        ]
+      ],
+      "numbers": [
+        [
+          "1800년",
+          "천팔백년"
+        ]
+      ],
+      "sha256": "d5ed0017909b60334582b385edf3734b937ac1587c1d7e6b450626b6066bb755"
+    },
+    {
+      "id": "10852246572628190537",
+      "text_id": "1716",
+      "duration": 24.06,
+      "split": "test",
+      "kind": "speech",
+      "names": [
+        [
+          "세풀베다"
+        ],
+        [
+          "캘리포니아"
+        ]
+      ],
+      "numbers": [],
+      "sha256": "69a5c4f77a07ef540858b4daf97dd258c827300221809292d387af183b1e428b"
+    },
+    {
+      "id": "13052653707693087897",
+      "text_id": "1984",
+      "duration": 18.42,
+      "split": "test",
+      "kind": "speech",
+      "names": [],
+      "numbers": [],
+      "sha256": "790cb6dbf3ed4c5f0badfae06174aefc095957736d6eecb849a3325c79f243f9"
+    },
+    {
+      "id": "586909066302498736",
+      "text_id": "1896",
+      "duration": 17.58,
+      "split": "test",
+      "kind": "speech",
+      "names": [],
+      "numbers": [],
+      "sha256": "ae59b278c08b3364c5473b025c47ec9719df67b4316fc10fc34d84f1ff870d23"
+    },
+    {
+      "id": "18405177889131253811",
+      "text_id": "1798",
+      "duration": 11.7,
+      "split": "test",
+      "kind": "speech",
+      "names": [],
+      "numbers": [],
+      "sha256": "514e023f5d3ed3fadb1de14524ad153db4173743b1cef0f169b7bd500ee8ea26"
+    },
+    {
+      "id": "13232407932629953803",
+      "text_id": "1763",
+      "duration": 11.7,
+      "split": "test",
+      "kind": "speech",
+      "names": [
+        [
+          "은하수"
+        ],
+        [
+          "궁수자리 은하계"
+        ]
+      ],
+      "numbers": [],
+      "sha256": "4fdfb14b083bd66eac2a1143beaa74922610a5652eeb4a8e80d412377cb058ed"
+    },
+    {
+      "id": "4985994795401433710",
+      "text_id": "1893",
+      "duration": 12.24,
+      "split": "test",
+      "kind": "speech",
+      "names": [
+        [
+          "순다르반"
+        ],
+        [
+          "방글라데시"
+        ],
+        [
+          "인도"
+        ]
+      ],
+      "numbers": [
+        [
+          "80km",
+          "80킬로미터",
+          "팔십킬로미터"
+        ],
+        [
+          "50mi",
+          "50마일",
+          "오십마일"
+        ]
+      ],
+      "sha256": "76498a5239d83bce21784f63370a8b85aea6b360b5f60d2554942fcab7de318f"
+    },
+    {
+      "id": "584444606491915064",
+      "text_id": "1912",
+      "duration": 13.08,
+      "split": "test",
+      "kind": "speech",
+      "names": [
+        [
+          "프랑스"
+        ]
+      ],
+      "numbers": [],
+      "sha256": "5d662a74b42b7a3487f0ce6bb84e682a2718a6ad5cdd1296a835772fb765b25e"
+    },
+    {
+      "id": "16269174541714659426",
+      "text_id": "1911",
+      "duration": 16.68,
+      "split": "test",
+      "kind": "speech",
+      "names": [
+        [
+          "솅겐"
+        ]
+      ],
+      "numbers": [],
+      "sha256": "f389064b987846f3af5ef2e968fedd7058365b1f9142c3bd84f92148ae3151b3"
+    },
+    {
+      "id": "18145026371680113136",
+      "text_id": "1951",
+      "duration": 13.68,
+      "split": "test",
+      "kind": "speech",
+      "names": [
+        [
+          "고마"
+        ],
+        [
+          "니라공고"
+        ]
+      ],
+      "numbers": [
+        [
+          "2002년",
+          "이천이년"
+        ]
+      ],
+      "sha256": "0af75186268f4bace87f8fde025ff220f9f47e6ebf9a93592fe477c6794518db"
+    },
+    {
+      "id": "16847571592376678750",
+      "text_id": "1967",
+      "duration": 16.38,
+      "split": "test",
+      "kind": "speech",
+      "names": [
+        [
+          "레이튼"
+        ]
+      ],
+      "numbers": [],
+      "sha256": "9ee492d7f0d77446eb5dd9380435f9762f4d24bd60f01d3e360eddd24a4ea3d3"
+    },
+    {
+      "id": "15968665593896276135",
+      "text_id": "1997",
+      "duration": 19.62,
+      "split": "test",
+      "kind": "speech",
+      "names": [
+        [
+          "남아프리카"
+        ]
+      ],
+      "numbers": [
+        [
+          "330000명",
+          "33만명",
+          "삼십삼만명"
+        ],
+        [
+          "6000명",
+          "6천명",
+          "육천명"
+        ]
+      ],
+      "sha256": "55e1e4d4a0bbc8247c641db9ac73ef300519323fe2b6fdfb62819a7ee6ae3569"
+    },
+    {
+      "id": "11859537746411417197",
+      "text_id": "1977",
+      "duration": 10.98,
+      "split": "test",
+      "kind": "speech",
+      "names": [],
+      "numbers": [
+        [
+          "1~3마리",
+          "1-3마리",
+          "1에서3마리",
+          "한마리에서세마리"
+        ],
+        [
+          "30마리",
+          "서른마리",
+          "삼십마리"
+        ]
+      ],
+      "sha256": "3e5192590a816c733020ae3cb2834f4e0b2d93f6275064ca69077dad76b636cc"
+    },
+    {
+      "id": "1007237877117014760",
+      "text_id": "1929",
+      "duration": 10.8,
+      "split": "test",
+      "kind": "speech",
+      "names": [
+        [
+          "델 포트로"
+        ]
+      ],
+      "numbers": [
+        [
+          "2세트",
+          "두세트",
+          "이세트"
+        ],
+        [
+          "6대6",
+          "육대육"
+        ]
+      ],
+      "sha256": "a5a400dda19a17f0ceb0c4a2542387ae376e3f0518ba0f9769564402df55affd"
+    },
+    {
+      "id": "12589757627743410499",
+      "text_id": "1739",
+      "duration": 15.78,
+      "split": "test",
+      "kind": "speech",
+      "names": [
+        [
+          "메카"
+        ]
+      ],
+      "numbers": [],
+      "sha256": "445fbe3856371a3cfaa9cc1d34dc5f2aa2d1e3b43d49161ac55729111ca75776"
+    },
+    {
+      "id": "10111865575098096607",
+      "text_id": "1801",
+      "duration": 12.12,
+      "split": "test",
+      "kind": "speech",
+      "names": [
+        [
+          "홍콩"
+        ],
+        [
+          "빅토리아 항구"
+        ]
+      ],
+      "numbers": [],
+      "sha256": "459b5666b2d4e54055d9d28463522f2f0f8ccb14fea27c0e1d1a5fe450377754"
+    },
+    {
+      "id": "3846981030131063538",
+      "text_id": "1692",
+      "duration": 9.6,
+      "split": "test",
+      "kind": "speech",
+      "names": [
+        [
+          "일본"
+        ]
+      ],
+      "numbers": [],
+      "sha256": "64e0f223cf34f13ad72a387c54a65f2a6a7331497b250003db637fdcf45f6bd1"
+    },
+    {
+      "id": "12322214958613662038",
+      "text_id": "1957",
+      "duration": 9.72,
+      "split": "test",
+      "kind": "speech",
+      "names": [],
+      "numbers": [],
+      "sha256": "a01e3fa348869420a45520ae0bc2458da43c57b5c0b9d0d59d813c47fbe81f45"
+    },
+    {
+      "id": "6399308309449036196",
+      "text_id": "1665",
+      "duration": 12.84,
+      "split": "test",
+      "kind": "speech",
+      "names": [
+        [
+          "팔레스타인"
+        ]
+      ],
+      "numbers": [
+        [
+          "1967년",
+          "천구백육십칠년"
+        ]
+      ],
+      "sha256": "cbb0e4779ce3734c6340a5448548fb3b067ed0d0899a71de54a31c468d5dd120"
+    },
+    {
+      "id": "zero-0",
+      "text_id": "zero-0",
+      "duration": 5,
+      "split": "test",
+      "kind": "non-speech",
+      "names": [],
+      "numbers": [],
+      "sha256": "754600f871902b78686a437542199c86f9ce21d65e7bdfed3e330311c5c0e24c"
+    },
+    {
+      "id": "zero-1",
+      "text_id": "zero-1",
+      "duration": 8,
+      "split": "test",
+      "kind": "non-speech",
+      "names": [],
+      "numbers": [],
+      "sha256": "c3a6650d6f76aed80175395bb9d387df1b88b817c35fed2c59d348f406d10956"
+    },
+    {
+      "id": "zero-2",
+      "text_id": "zero-2",
+      "duration": 12,
+      "split": "test",
+      "kind": "non-speech",
+      "names": [],
+      "numbers": [],
+      "sha256": "85ad31956938fd8b0792de85e7083e21d86a4538fed1600ac93a1efda8f5ded3"
+    },
+    {
+      "id": "hiss-0",
+      "text_id": "hiss-0",
+      "duration": 5,
+      "split": "test",
+      "kind": "non-speech",
+      "names": [],
+      "numbers": [],
+      "sha256": "2fe0634844d0d9a2b6d6ee58ff0a74e01ec97b4739c3c7bfdfcb7dd76baebfee"
+    },
+    {
+      "id": "hiss-1",
+      "text_id": "hiss-1",
+      "duration": 8,
+      "split": "test",
+      "kind": "non-speech",
+      "names": [],
+      "numbers": [],
+      "sha256": "3eb0970acff1ef555d7941e2db4cc0dc586de54ce090e27b9db0d4c9ab5511d7"
+    },
+    {
+      "id": "hiss-2",
+      "text_id": "hiss-2",
+      "duration": 12,
+      "split": "test",
+      "kind": "non-speech",
+      "names": [],
+      "numbers": [],
+      "sha256": "d51f3b61144c438b2eed0447a5356fb4b0bb402afbd53435ef189f63eecab675"
+    },
+    {
+      "id": "hum-0",
+      "text_id": "hum-0",
+      "duration": 5,
+      "split": "test",
+      "kind": "non-speech",
+      "names": [],
+      "numbers": [],
+      "sha256": "8a2fd397f740e685f4ad31c346040c45f24a5abdc05953d27f462e0e496d7c9e"
+    },
+    {
+      "id": "hum-1",
+      "text_id": "hum-1",
+      "duration": 8,
+      "split": "test",
+      "kind": "non-speech",
+      "names": [],
+      "numbers": [],
+      "sha256": "42cfab990a07e74bb411a212f414cd935309d0a828d4636c5f105846466f2ae6"
+    },
+    {
+      "id": "hum-2",
+      "text_id": "hum-2",
+      "duration": 12,
+      "split": "test",
+      "kind": "non-speech",
+      "names": [],
+      "numbers": [],
+      "sha256": "4b7ee1e4baaa3683da40820412a985afc7dd38cb652f2b7be3392948011b78d9"
+    },
+    {
+      "id": "clicks-0",
+      "text_id": "clicks-0",
+      "duration": 5,
+      "split": "test",
+      "kind": "non-speech",
+      "names": [],
+      "numbers": [],
+      "sha256": "49c26dfd7380f04eb58a1b28717f7af481ddd47305d76e5f3f2bb9f21182b4d1"
+    },
+    {
+      "id": "clicks-1",
+      "text_id": "clicks-1",
+      "duration": 8,
+      "split": "test",
+      "kind": "non-speech",
+      "names": [],
+      "numbers": [],
+      "sha256": "7c18a6d774c5fc827df98929a64d5cf69ae00f388cb638c53dbb7f6cfe4c8a09"
+    },
+    {
+      "id": "clicks-2",
+      "text_id": "clicks-2",
+      "duration": 12,
+      "split": "test",
+      "kind": "non-speech",
+      "names": [],
+      "numbers": [],
+      "sha256": "777bb01e72e5ebcbcc281cebbd466c2688764c71cca59f9e4190ad630c140d25"
+    },
+    {
+      "id": "7219402074434802960",
+      "text_id": "1895",
+      "duration": 10.56,
+      "split": "confirm",
+      "kind": "speech",
+      "names": [
+        [
+          "그리스"
+        ]
+      ],
+      "numbers": [],
+      "sha256": "5cbdaff59bed5d4cd55d9b27b5cfb119b3abb81cf09fb2715bde64e93e4d52cb"
+    },
+    {
+      "id": "4043681159346307354",
+      "text_id": "1704",
+      "duration": 13.2,
+      "split": "confirm",
+      "kind": "speech",
+      "names": [
+        [
+          "팀북투"
+        ]
+      ],
+      "numbers": [
+        [
+          "1990년",
+          "천구백구십년"
+        ]
+      ],
+      "sha256": "02d36579a23870ae22b5c6885183d66f5987c0a4d9d6ae4e8193ddf77bdf614b"
+    },
+    {
+      "id": "1935539780401951035",
+      "text_id": "1756",
+      "duration": 13.62,
+      "split": "confirm",
+      "kind": "speech",
+      "names": [
+        [
+          "도널드 트럼프"
+        ],
+        [
+          "미국"
+        ],
+        [
+          "시리아"
+        ]
+      ],
+      "numbers": [],
+      "sha256": "0519519d40f9e50bb0669b5337ec7eaab3a9300d44212655421e111a88156c52"
+    },
+    {
+      "id": "15958585165446908844",
+      "text_id": "1859",
+      "duration": 17.52,
+      "split": "confirm",
+      "kind": "speech",
+      "names": [
+        [
+          "서유럽"
+        ],
+        [
+          "십자군"
+        ]
+      ],
+      "numbers": [],
+      "sha256": "892f5b195c42000995316a22716c854bc22b76f094f5916ec1b2411f373a89e0"
+    },
+    {
+      "id": "4015912474353968885",
+      "text_id": "2008",
+      "duration": 12.42,
+      "split": "confirm",
+      "kind": "speech",
+      "names": [
+        [
+          "발리"
+        ]
+      ],
+      "numbers": [],
+      "sha256": "61befc2387d4625c86654ec61c216f788fa01b60e7741c62c75f9975cfd86fda"
+    },
+    {
+      "id": "17643643932679067569",
+      "text_id": "1773",
+      "duration": 15.54,
+      "split": "confirm",
+      "kind": "speech",
+      "names": [],
+      "numbers": [
+        [
+          "10–60분",
+          "10-60분",
+          "10~60분",
+          "10에서60분",
+          "십에서육십분"
+        ]
+      ],
+      "sha256": "0eea6955eb63688df38dc645bf9b8f8e76f467f3d7adb73b914ebcf116d89ea1"
+    },
+    {
+      "id": "4966121187772627779",
+      "text_id": "1661",
+      "duration": 12.72,
+      "split": "confirm",
+      "kind": "speech",
+      "names": [
+        [
+          "중국"
+        ]
+      ],
+      "numbers": [],
+      "sha256": "9acd42f712e3890d9462481f9d3092f8a0338aed093de0ad173d6a9fcaf777ce"
+    },
+    {
+      "id": "8678599422643738151",
+      "text_id": "1943",
+      "duration": 17.46,
+      "split": "confirm",
+      "kind": "speech",
+      "names": [],
+      "numbers": [],
+      "sha256": "4d82328956f172cf25842e2713c68b37245b1ca2dbd175bab887596e245d4a78"
+    },
+    {
+      "id": "5012287182929780013",
+      "text_id": "1721",
+      "duration": 12.18,
+      "split": "confirm",
+      "kind": "speech",
+      "names": [],
+      "numbers": [
+        [
+          "1963년",
+          "천구백육십삼년"
+        ]
+      ],
+      "sha256": "0b6a6901ac7e852a9d3c11586486b0718856f88cc603dbff8e633fbda2293b2e"
+    },
+    {
+      "id": "16415449963553630680",
+      "text_id": "1790",
+      "duration": 19.8,
+      "split": "confirm",
+      "kind": "speech",
+      "names": [],
+      "numbers": [],
+      "sha256": "0112b7386a8a25dd90bcbeb5bae57224c9f637e911901e059708caaa1152d73b"
+    },
+    {
+      "id": "17063620647845983322",
+      "text_id": "1942",
+      "duration": 12.84,
+      "split": "confirm",
+      "kind": "speech",
+      "names": [],
+      "numbers": [],
+      "sha256": "9f0a85385f2275839df085b291713eb7a3ea70d993d5b554caea65e8b730162a"
+    },
+    {
+      "id": "15119034876796183586",
+      "text_id": "1930",
+      "duration": 12.3,
+      "split": "confirm",
+      "kind": "speech",
+      "names": [
+        [
+          "필리핀"
+        ]
+      ],
+      "numbers": [
+        [
+          "6명",
+          "여섯명",
+          "육명"
+        ]
+      ],
+      "sha256": "b7a8f8774fbc4bf4e865ae31da73fbce3c2e4fbaca0e8f645dfec366ca3c84b7"
+    },
+    {
+      "id": "1441445080190694850",
+      "text_id": "1676",
+      "duration": 9.72,
+      "split": "confirm",
+      "kind": "speech",
+      "names": [
+        [
+          "남아프리카"
+        ]
+      ],
+      "numbers": [],
+      "sha256": "d68be0b8875922db8dda6f42622fcfdf342daacc8eed6a91a407b48840d1dfd3"
+    },
+    {
+      "id": "10257637429860465993",
+      "text_id": "1850",
+      "duration": 17.7,
+      "split": "confirm",
+      "kind": "speech",
+      "names": [],
+      "numbers": [
+        [
+          "802.11a",
+          "802.11에이"
+        ],
+        [
+          "802.11b",
+          "802.11비"
+        ],
+        [
+          "802.11g",
+          "802.11지"
+        ]
+      ],
+      "sha256": "e9a95d4bb0f58bfc06d066df5dc283976021ab6f824befea16ee05b39814fc08"
+    },
+    {
+      "id": "15985002105030413816",
+      "text_id": "1991",
+      "duration": 11.58,
+      "split": "confirm",
+      "kind": "speech",
+      "names": [
+        [
+          "유럽"
+        ],
+        [
+          "가톨릭교회"
+        ]
+      ],
+      "numbers": [],
+      "sha256": "d489881afe238bc091e17c99a5cd4f5a8b334d61c4317a851752e8cdb4a9f92b"
+    },
+    {
+      "id": "9215841188177323168",
+      "text_id": "1786",
+      "duration": 9.48,
+      "split": "confirm",
+      "kind": "speech",
+      "names": [],
+      "numbers": [],
+      "sha256": "b8fa5663f070afe937f609cac15316da0cc395cd61690d02fdd3941777e86c92"
+    },
+    {
+      "id": "5901015910036461944",
+      "text_id": "1667",
+      "duration": 17.46,
+      "split": "confirm",
+      "kind": "speech",
+      "names": [],
+      "numbers": [],
+      "sha256": "20992b0b26d7fd25cac4a1ea995898bc7bfc5e101fe21c80c521e93d27554305"
+    },
+    {
+      "id": "10505940208824594418",
+      "text_id": "1742",
+      "duration": 10.32,
+      "split": "confirm",
+      "kind": "speech",
+      "names": [
+        [
+          "홍콩"
+        ]
+      ],
+      "numbers": [],
+      "sha256": "468da776f7640d894001d2795fd764629d0113dbf8384bd1d74ca31b281fb0d1"
+    },
+    {
+      "id": "17711172129616599893",
+      "text_id": "2002",
+      "duration": 12.24,
+      "split": "confirm",
+      "kind": "speech",
+      "names": [],
+      "numbers": [],
+      "sha256": "9f5b118e67d4ae90a70695d490df980d5438e177339ee5c5fd3b2433a4148cd0"
+    },
+    {
+      "id": "12488893150512482567",
+      "text_id": "1727",
+      "duration": 10.26,
+      "split": "confirm",
+      "kind": "speech",
+      "names": [],
+      "numbers": [],
+      "sha256": "a3e4c9b5d397af1ce76744c026258791781a49b99bb3e9ccff8959ee595874fd"
+    },
+    {
+      "id": "13177652821881600377",
+      "text_id": "1861",
+      "duration": 10.86,
+      "split": "confirm",
+      "kind": "speech",
+      "names": [],
+      "numbers": [],
+      "sha256": "5b17ba756c9e6a0ea0602488f604ffbee76b398550f2e1d418bc4d30244c08fe"
+    },
+    {
+      "id": "2716842591113787110",
+      "text_id": "1679",
+      "duration": 4.68,
+      "split": "confirm",
+      "kind": "speech",
+      "names": [
+        [
+          "에어로스미스"
+        ]
+      ],
+      "numbers": [],
+      "sha256": "823bc6ec4cd7d9ff92a995ddbc61e0e5ce4067b2bc2252c7802635560a81af6d"
+    },
+    {
+      "id": "10667839008527105971",
+      "text_id": "1674",
+      "duration": 10.38,
+      "split": "confirm",
+      "kind": "speech",
+      "names": [],
+      "numbers": [
+        [
+          "1분",
+          "일분",
+          "한분"
+        ]
+      ],
+      "sha256": "32edf138b41fe9475085ee516f54aa4432968d113721401ec9763b3f55122d17"
+    },
+    {
+      "id": "12130860140913353253",
+      "text_id": "1690",
+      "duration": 18.06,
+      "split": "confirm",
+      "kind": "speech",
+      "names": [
+        [
+          "USOC"
+        ]
+      ],
+      "numbers": [],
+      "sha256": "65afb1f40f9a1298b8a0e6c686a0feada303dc09dbdbca9b979b556b1cb1586a"
+    }
+  ],
+  "endpoint_annotation": "Independently estimated by visual inspection of the last 5 seconds of each spectrogram, before realtime runs. Last visible speech band/formant including final consonant; isolated clicks and steady room tone excluded. Not a human word alignment. Clip-boundary measurements also retained.",
+  "confirmation_selection": "24 new text groups; exclude all historical original, expanded and confirmation groups plus all current dev/test groups; SHA256(meeting-recorder-confirm-v2:text_id), one recording per group. Run only baseline and selected method after locking the decision."
+}

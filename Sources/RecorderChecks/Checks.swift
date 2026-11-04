@@ -39,6 +39,9 @@ enum Checks {
             ("두 입력의 중간 결과 독립 처리", { try suite.independentPartials() }),
             ("Whisper 기존 모델 재사용·선택 모델 설치 상태 분리", { try await suite.speechModelCache() }),
             ("Whisper 무음 메모리 제한·발화 확정·입력 공백 보존", { try suite.whisperWindows() }),
+            ("무음·밀린 미리보기 생략과 확정 결과 우선", { try suite.previewPriority() }),
+            ("잡음 제외·작은 목소리·발화 앞뒤 보존", { try suite.voiceBoundaries() }),
+            ("단어 시간 없는 긴 발화는 누락·중복 없이 분할", { try suite.nonOverlappingSpeech() }),
             ("Whisper 긴 발언의 경계 문맥과 단어 중복 방지", { try suite.whisperOverlap() }),
             ("Whisper 단어 시간·불확실 전사 보존·무음 출력 제외", { try suite.whisperMapping() }),
             ("Whisper 마이크 확정·빈 입력 종료·취소", { try await suite.whisperLifecycle() }),
@@ -185,6 +188,45 @@ final class RecorderChecks {
         try expect(window.finish()?.start == 90, "재개된 입력의 원래 시간 손실")
     }
 
+    func previewPriority() throws {
+        let policy = LivePreviewPolicy()
+        policy.received(through: 10)
+        try expect(!policy.shouldDecode(final: false, isSpeech: true, end: 8), "이미 밀린 자막 미리보기를 계산함")
+        try expect(!policy.shouldDecode(final: false, isSpeech: false, end: 10), "발화가 끝날 때 중복 미리보기를 시작함")
+        try expect(policy.shouldDecode(final: false, isSpeech: true, end: 9.9), "말하는 동안 최신 미리보기를 버림")
+        try expect(policy.shouldDecode(final: true, isSpeech: false, end: 8), "처리가 밀리거나 무음이면 확정까지 생략함")
+    }
+
+    func voiceBoundaries() throws {
+        var window = WhisperAudioWindow(silenceDuration: 0.6)
+        let noise = Array(repeating: Float(0.1), count: 16_000)
+        let quietReply = Array(repeating: Float(0.0001), count: 1_920) // 120 ms, below the energy gate
+        try expect(window.append(noise, at: 5, isSpeech: false).isEmpty && window.bufferedSampleCount == 4_800,
+                   "배경음만으로 전사를 요청했거나 발화 앞소리를 보존하지 않음")
+        _ = window.append(quietReply, at: 6, isSpeech: true)
+        let finals = window.append(noise, at: 6.12, isSpeech: false).filter(\.isFinal)
+        try expect(finals.count == 1 && abs(finals[0].start - 5.7) < 0.001,
+                   "짧고 조용한 대답을 놓치거나 앞소리 시각이 다름")
+        try expect(Array(finals[0].samples[4_800..<6_720]) == quietReply && window.finish() == nil,
+                   "말소리 감지가 원본 샘플을 잘랐거나 무음을 다시 확정함")
+    }
+
+    func nonOverlappingSpeech() throws {
+        var window = WhisperAudioWindow(silenceDuration: 0.6, maximumDuration: 30, retainedTailSeconds: 0)
+        let samples = (0..<992_000).map { Float($0 % 1024) / 1024 }
+        var finals = window.append(samples, at: 11, isSpeech: true).filter(\.isFinal)
+        if let tail = window.finish() { finals.append(tail) }
+        try expect(finals.count == 3 && finals.map(\.start) == [11,41,71] && finals.flatMap(\.samples) == samples,
+                   "단어 시간이 없는 모델이 긴 발화의 샘플을 중복하거나 누락함")
+        var mapper = WhisperTranscriptMapper()
+        for (i, request) in finals.enumerated() {
+            let decoded = TranscriptionSegment(start: 0, end: Float(request.end-request.start), text: "발언 \(i)")
+            let mapped = mapper.map([decoded], request: request, source: .microphone)
+            try expect(mapped.text == "발언 \(i)" && mapped.start == request.start && mapped.words == nil,
+                       "구간 단위 전사에 잘못된 단어 시간이나 중복이 생김")
+        }
+    }
+
     func whisperOverlap() throws {
         var window = WhisperAudioWindow()
         var finals: [WhisperAudioWindow.Request] = []
@@ -241,7 +283,7 @@ final class RecorderChecks {
     }
 
     @MainActor func whisperLifecycle() async throws {
-        let lane = try await SpeechLane.create(source: .microphone, onResult: { _, _ in }, onError: { _ in })
+        let lane = try await SpeechLane.create(source: .microphone, segmentation: .energy, onResult: { _, _ in }, onError: { _ in })
         let format = AVAudioFormat(standardFormatWithSampleRate: 48_000, channels: 1)!
         let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: 4_800)!
         buffer.frameLength = 4_800
@@ -253,7 +295,7 @@ final class RecorderChecks {
         do { try await lane.synchronize(); throw CheckError.failed("종료된 입력의 확인이 성공함") }
         catch is CheckError { throw CheckError.failed("종료된 입력의 확인이 성공함") }
         catch { }
-        let cancelled = try await SpeechLane.create(source: .microphone, onResult: { _, _ in }, onError: { _ in })
+        let cancelled = try await SpeechLane.create(source: .microphone, segmentation: .energy, onResult: { _, _ in }, onError: { _ in })
         await cancelled.cancel()
     }
 

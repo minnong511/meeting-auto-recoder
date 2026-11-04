@@ -11,16 +11,21 @@ https://huggingface.co/pyannote/speaker-diarization-community-1 (CC BY 4.0)
 https://github.com/wenet-e2e/wespeaker (Apache 2.0)
 https://github.com/BUTSpeechFIT/VBx (Apache 2.0)
 
-Only FluidAudio's speaker diarization models are loaded by Meeting Recorder. SDK text-to-speech
-and speech recognition models are not downloaded or used by this application.
+Live speech activity detection uses Silero VAD (MIT), converted to Core ML by
+FluidInference and downloaded separately (silero-vad-unified-256ms-v6.2.1).
+https://github.com/snakers4/silero-vad
+https://huggingface.co/FluidInference/silero-vad-coreml
+FluidAudio's synthesis and speech recognition models are not used.
 
 WhisperKit (Argmax Open-Source SDK) 1.1.1
 Copyright Argmax, Inc. MIT License.
 https://github.com/argmaxinc/argmax-oss-swift/tree/v1.1.1
 The full SDK license is included in WhisperKit-LICENSE.txt.
 
-Live speech recognition uses OpenAI Whisper large-v3-turbo, compressed to 4-bit by
-Argmax. Model assets and tokenizer files are downloaded separately and cached.
+Live speech recognition uses multilingual OpenAI Whisper models converted by
+Argmax. The source build recommends large-v3 (947MB variant); Turbo and smaller
+models can also be selected. Model assets and tokenizer files are downloaded separately.
+https://huggingface.co/argmaxinc/whisperkit-coreml/tree/main/openai_whisper-large-v3_947MB
 https://huggingface.co/argmaxinc/whisperkit-coreml/tree/main/openai_whisper-large-v3-v20240930_626MB
 https://github.com/openai/whisper (MIT License)
 No audio is sent to a speech recognition API.

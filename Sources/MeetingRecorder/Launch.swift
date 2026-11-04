@@ -43,7 +43,7 @@ enum Launch {
             return
         }
         let modelsDirectory = argument("--models").map { URL(fileURLWithPath: $0, isDirectory: true) }
-        let speechModelName = argument("--speech-model") ?? SpeechModel.largeV3Turbo.rawValue
+        let speechModelName = argument("--speech-model") ?? SpeechModel.recommended.rawValue
         guard let speechModel = SpeechModel(rawValue: speechModelName) else {
             fputs("알 수 없는 전사 모델: \(speechModelName)\n", stderr)
             exit(2)
@@ -115,7 +115,7 @@ enum Launch {
                 encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
                 if CommandLine.arguments.contains("--with-speakers") {
                     var meeting = Meeting(title: url.deletingPathExtension().lastPathComponent)
-                    meeting.transcriptionEngine = speechModel.engineDescription
+                    meeting.transcriptionEngine = speechModel.engineDescription + " · vad"
                     meeting.segments = segments
                     meeting.status = .completed
                     let turns = try await Task.detached(priority: .utility) {

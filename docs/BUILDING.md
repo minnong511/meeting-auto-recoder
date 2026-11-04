@@ -78,3 +78,13 @@ python3 scripts/package-release.py --app 'dist/package/Meeting Recorder.app'
 별도 실행 승인 없는 공증 배포에는 Apple이 발급한 Developer ID Application 인증서, 공증, 공증 티켓 스테이플링이 필요합니다. `--require-notarized` 검사는 이 조건들을 확인하며 기존 로컬 서명 앱에서는 실패하는 것이 정상입니다. 서명 주체 변경은 의도적인 마이그레이션으로 별도 진행해야 합니다.
 
 [Apple의 Developer ID 배포 안내](https://developer.apple.com/developer-id/)
+
+## 로컬 음성 인식
+
+소스 빌드의 권장 전사 모델은 Whisper large-v3입니다. 모델과 Silero 말소리 감지는 처음 한 번 내려받습니다. 설치 직후 미리 준비하려면 아래 명령을 사용합니다.
+
+```sh
+'dist/Meeting Recorder.app/Contents/MacOS/MeetingRecorder' --prepare-speech
+```
+
+직접 선택한 모델은 그대로 사용합니다. 업데이트 후 권장 모델 준비에 실패하고 이전 Turbo가 캐시에 있다면, 모델을 직접 지정하지 않은 경우에만 그 녹음에서 Turbo를 사용합니다. 말소리 감지 모델을 준비하지 못하면 이전 음량 기준으로 녹음을 계속합니다. 실제 사용한 방식과 예외는 회의 메타데이터에 남깁니다. Qwen3-ASR 비교 도구의 Python 환경은 앱과 별개입니다. [평가 재현](../experiments/accuracy/README.md)

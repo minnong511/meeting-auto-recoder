@@ -14,7 +14,7 @@ final class RecorderModel: ObservableObject {
     @Published var title = ""
     @Published var statusText = "녹음할 준비가 되었습니다"
     @Published var supportText = SpeechSupport.supportLabel
-    @Published private(set) var speechModel: SpeechModel = .largeV3Turbo
+    @Published private(set) var speechModel: SpeechModel = .recommended
     @Published var errorMessage: String?
     @Published var metrics = CaptureMetrics()
     @Published var pendingTranscript = PendingTranscript()
@@ -83,7 +83,7 @@ final class RecorderModel: ObservableObject {
         if UserDefaults.standard.object(forKey: "recordingIslandEnabled") != nil {
             recordingIslandEnabled = UserDefaults.standard.bool(forKey: "recordingIslandEnabled")
         }
-        speechModel = UserDefaults.standard.string(forKey: "speechModel").flatMap(SpeechModel.init(rawValue:)) ?? .largeV3Turbo
+        speechModel = UserDefaults.standard.string(forKey: "speechModel").flatMap(SpeechModel.init(rawValue:)) ?? .recommended
         selectedLocalModel = UserDefaults.standard.string(forKey: "localPolishModel") ?? "qwen3.5:4b"
         refreshLocalModels()
         if let saved = UserDefaults.standard.string(forKey: "recordingTargetID") {
@@ -206,7 +206,7 @@ final class RecorderModel: ObservableObject {
     }
 
     func checkSupport() async {
-        supportText = "Whisper 모델 확인 중…"
+        supportText = "음성 인식 모델 확인 중…"
         let selected = speechModel
         let result = await SpeechSupport.inspect(model: selected)
         guard selected == speechModel else { return }
@@ -247,7 +247,7 @@ final class RecorderModel: ObservableObject {
     }
 
     private func startRecording() async {
-        let recordingModel = speechModel
+        var recordingModel = speechModel
         do {
             statusText = "마이크 권한 확인 중…"
             if microphoneEnabled {
@@ -262,23 +262,41 @@ final class RecorderModel: ObservableObject {
             guard let target = activeTarget else { throw RecorderError.message("녹음할 앱을 선택해 주세요.") }
             _ = try CaptureService.contentFilter(content: content, target: target)
             try Task.checkCancellation()
-            statusText = "Whisper 모델 준비 중…"
-            try await SpeechLane.prepareAssets(model: recordingModel) { [weak self] message in
+            statusText = "음성 인식 모델 준비 중…"
+            let progress: @Sendable (String) -> Void = { [weak self] message in
                 Task { @MainActor [weak self] in
                     guard self?.phase == .preparing else { return }
                     self?.statusText = message
                 }
+            }
+            let segmentation: SpeechSegmentation
+            var modelWarning: String?
+            do {
+                segmentation = try await SpeechLane.prepareAssets(model: recordingModel, allowEnergyFallback: true, progress: progress)
+            } catch {
+                try Task.checkCancellation()
+                // An offline upgrade can still use the previously cached model. Respect an explicit choice.
+                guard recordingModel == .recommended,
+                      UserDefaults.standard.string(forKey: "speechModel") == nil,
+                      await SpeechSupport.inspect(model: .largeV3Turbo).koreanInstalled else { throw error }
+                recordingModel = .largeV3Turbo
+                modelWarning = "권장 모델을 준비하지 못해 이 Mac에 설치된 Whisper large-v3-turbo로 전사했습니다."
+                segmentation = try await SpeechLane.prepareAssets(model: recordingModel, allowEnergyFallback: true, progress: progress)
             }
             try Task.checkCancellation()
             guard let root else { throw RecorderError.message("저장 폴더를 선택해 주세요.") }
             let stored = try MeetingStore(root: root).create(title: title)
             current = stored
             current?.meeting.recordingTarget = target
-            current?.meeting.transcriptionEngine = recordingModel.engineDescription
+            current?.meeting.transcriptionEngine = recordingModel.engineDescription + " · " + segmentation.rawValue
+            if let modelWarning { current?.meeting.warnings.append(modelWarning) }
+            if segmentation == .energy {
+                current?.meeting.warnings.append("말소리 감지 모델을 준비하지 못해 이번 녹음에는 음량 기준 감지를 사용했습니다.")
+            }
             selectedID = stored.id
             updateList(stored)
             for source in AudioSource.allCases {
-                let lane = try await SpeechLane.create(source: source, onResult: { [weak self] segment, final in
+                let lane = try await SpeechLane.create(source: source, segmentation: segmentation, onResult: { [weak self] segment, final in
                     self?.receive(segment, final: final, meetingID: stored.id)
                 }, onError: { [weak self] error in
                     Task { @MainActor in self?.transcriptionFailed(source: source, error: error, meetingID: stored.id) }

@@ -1,6 +1,6 @@
 import Foundation
 
-/// Bounded 16 kHz windows, with quiet pre-roll and an overlapping speech tail.
+/// Bounded 16 kHz speech windows. Only decoders with word timestamps reuse an overlapping tail.
 public struct WhisperAudioWindow: Sendable {
     public struct Request: Sendable {
         public var samples: [Float]
@@ -17,9 +17,17 @@ public struct WhisperAudioWindow: Sendable {
     private var lastVoice: Double?
     private var lastDecode: Double = 0
     public var bufferedSampleCount: Int { samples.count }
-    public init() {}
+    private let silenceDuration: Double
+    private let maximumSamples: Int
+    private let retainedSamples: Int
+    public init(silenceDuration: Double = 0.8, maximumDuration: Double = 24, retainedTailSeconds: Double = 8) {
+        self.silenceDuration = silenceDuration.isFinite && silenceDuration > 0 ? silenceDuration : 0.8
+        let maximum = maximumDuration.isFinite ? min(30, max(2, maximumDuration)) : 24
+        maximumSamples = Int(maximum * 16_000)
+        retainedSamples = Int(min(maximum - 1, max(0, retainedTailSeconds.isFinite ? retainedTailSeconds : 8)) * 16_000)
+    }
 
-    public mutating func append(_ input: [Float], at time: Double) -> [Request] {
+    public mutating func append(_ input: [Float], at time: Double, isSpeech: Bool? = nil) -> [Request] {
         var requests: [Request] = []
         if !samples.isEmpty && time - (start + Double(samples.count) / 16_000) > 0.1 {
             if let request = finish() { requests.append(request) }
@@ -30,8 +38,7 @@ public struct WhisperAudioWindow: Sendable {
             if samples.isEmpty { start = blockStart; lastDecode = start }
             samples.append(contentsOf: block)
             let end = start + Double(samples.count) / 16_000
-            let energy = block.reduce(0.0) { $0 + Double($1 * $1) } / Double(block.count)
-            if energy > 0.000001 { lastVoice = end }
+            if isSpeech ?? (block.reduce(0.0) { $0 + Double($1 * $1) } / Double(block.count) > 0.000001) { lastVoice = end }
             guard let lastVoice else {
                 if samples.count > 4_800 {
                     let removed = samples.count - 4_800
@@ -41,17 +48,18 @@ public struct WhisperAudioWindow: Sendable {
                 }
                 continue
             }
-            if end - lastVoice >= 0.8 {
+            if end - lastVoice >= silenceDuration {
                 if let request = finish() { requests.append(request) }
-            } else if samples.count >= 24 * 16_000 {
-                requests.append(Request(samples: samples, start: start, commitThrough: end - 1))
+            } else if samples.count >= maximumSamples {
+                requests.append(Request(samples: samples, start: start, commitThrough: retainedSamples == 0 ? end : end - 1))
                 // A very short final tail can be classified as silence when it
                 // begins inside a word. Retain enough preceding speech for the
                 // decoder to recognize the whole sentence, then trim by time.
-                let removed = samples.count - 8 * 16_000
+                let removed = samples.count - retainedSamples
                 samples.removeFirst(removed)
                 start += Double(removed) / 16_000
                 lastDecode = end
+                if samples.isEmpty { self.lastVoice = nil }
             } else if end - lastDecode >= 4 && end - start >= 3.8 {
                 requests.append(Request(samples: samples, start: start, commitThrough: nil))
                 lastDecode = end
