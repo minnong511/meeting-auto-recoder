@@ -3,7 +3,7 @@ import Darwin
 import Foundation
 import RecorderCore
 
-private struct UpdateHandoff {
+struct UpdateHandoff {
     let command: FileHandle
 
     static func prepare(_ release: RecorderRelease, app: URL) async throws -> Self {
@@ -41,6 +41,26 @@ private struct UpdateHandoff {
 }
 
 extension RecorderModel {
+    private static var hasModalWindow: Bool {
+        NSApp.modalWindow != nil || NSApp.windows.contains { $0.isVisible && $0.attachedSheet != nil }
+    }
+
+    // Authorize the swap only when AppKit actually enters its termination delegate.
+    func confirmUpdateOnQuit() -> Bool {
+        guard let pending = pendingUpdate else { return true }
+        pendingUpdate = nil
+        do {
+            guard !isBusy, !isSeparatingSpeakers, summarizingID == nil else { throw MCPError.message("작업이 끝난 뒤 다시 설치해 주세요.") }
+            try pending.command.write(contentsOf: Data("INSTALL\n".utf8))
+            return true
+        } catch {
+            isQuitting = false
+            updateInstallError = error.localizedDescription
+            openSettings(.general)
+            return false
+        }
+    }
+
     var canInstallUpdate: Bool { !isBusy && !isSeparatingSpeakers && summarizingID == nil && !isInstallingUpdate && !isQuitting }
 
     func installUpdate(_ version: RecorderRelease) {
@@ -55,9 +75,26 @@ extension RecorderModel {
                 guard !isQuitting, !isBusy, !isSeparatingSpeakers, summarizingID == nil else {
                     throw MCPError.message("진행 중인 작업이 끝난 뒤 다시 설치해 주세요.")
                 }
-                try prepared.command.write(contentsOf: Data("INSTALL\n".utf8))
+                // AppKit can decline termination while a SwiftUI settings sheet is attached.
+                showsSettings = false
+                for _ in 0..<40 {
+                    try await Task.sleep(for: .milliseconds(50))
+                    if !Self.hasModalWindow { break }
+                }
+                guard !Self.hasModalWindow else { throw MCPError.message("열린 대화상자를 닫고 다시 설치해 주세요.") }
+                guard !isQuitting, !isBusy, !isSeparatingSpeakers, summarizingID == nil else {
+                    throw MCPError.message("진행 중인 작업이 끝난 뒤 다시 설치해 주세요.")
+                }
+                pendingUpdate = prepared
                 isQuitting = true
                 NSApp.terminate(nil)
+                // If the system vetoes quit, EOF withdraws the prepared update.
+                try await Task.sleep(for: .seconds(3))
+                if pendingUpdate != nil {
+                    pendingUpdate = nil
+                    isQuitting = false
+                    throw MCPError.message("레코더를 종료하지 못했습니다. 열린 창을 확인하고 다시 시도해 주세요.")
+                }
             } catch {
                 updateInstallError = error.localizedDescription
                 openSettings(.general)

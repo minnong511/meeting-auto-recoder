@@ -66,7 +66,7 @@ bash scripts/build-app.sh
 python3 scripts/check-signing.py
 python3 scripts/check-app-update.py
 python3 scripts/package-release.py
-python3 scripts/check-release.py releases/Meeting-Recorder-0.8.2-macOS-arm64.zip
+python3 scripts/check-release.py releases/Meeting-Recorder-0.8.3-macOS-arm64.zip
 ```
 
 `package-release.py`는 이미 빌드한 앱을 검증하고 ZIP으로 묶습니다. 앱을 다시 서명하거나 설치하지 않습니다. `check-release.py`는 ZIP을 별도 임시 폴더에 풀어 파일 목록·SHA-256·실행 권한·앱/MCP 서명과 시작 진단을 확인합니다. 새로운 Mac의 시스템 오디오 권한과 실제 녹음까지 검증하는 절차는 아니므로 대상 Mac에서도 테스트해야 합니다.
@@ -91,3 +91,7 @@ python3 scripts/package-release.py --app 'dist/package/Meeting Recorder.app'
 ```
 
 직접 선택한 모델은 그대로 사용합니다. 업데이트 후 권장 모델 준비에 실패하고 음성 인식 모델을 직접 선택하지 않았다면, 캐시에 있는 Core ML large-v3, Turbo 순으로 대체 모델을 선택합니다. 말소리 감지 모델을 준비하지 못하면 이전 음량 기준으로 녹음을 계속합니다. 실제 사용한 방식과 예외는 회의 메타데이터에 남깁니다. Qwen3-ASR 비교 도구의 Python 환경은 앱과 별개입니다. [평가 재현](../experiments/accuracy/README.md)
+
+### 앱 내 업데이트 최종 확인
+
+정식 배포 전에 별도 폴더의 시험용 앱에서 **일반 → 업데이트 → 지금 확인 → 설치하고 다시 열기**를 누릅니다. 업데이트 코드는 배포 후보와 같고 표시 버전만 현재 공개 버전보다 낮은 시험용 빌드를 사용합니다. 설정 창이 열려 있는 상태에서 시작해 기존 프로세스 종료, 원래 경로에서 새 프로세스 실행, 공개 ZIP과 실행 파일 일치, 이전 앱 백업을 확인합니다. 검증용 앱과 녹음 폴더는 사용자의 실제 설치와 분리합니다.

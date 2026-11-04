@@ -73,6 +73,7 @@ final class RecorderModel: ObservableObject {
     private var warnedSources = Set<AudioSource>()
     private var speakerTask: Task<Meeting, Error>?
     var isQuitting = false
+    var pendingUpdate: UpdateHandoff?
     @Published var isInstallingUpdate = false
     @Published var updateInstallError: String?
     private let appMonitor = MeetingAppMonitor()
