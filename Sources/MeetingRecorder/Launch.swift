@@ -206,7 +206,7 @@ final class RecorderAppDelegate: NSObject, NSApplicationDelegate {
     }
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
         island?.prepareForTermination()
-        guard let model, model.isBusy else { return .terminateNow }
+        guard let model, model.isBusy || model.summarizingID != nil else { return .terminateNow }
         Task {
             await model.finishBeforeQuitting()
             sender.reply(toApplicationShouldTerminate: true)

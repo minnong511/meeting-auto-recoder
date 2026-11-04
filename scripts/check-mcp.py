@@ -35,6 +35,11 @@ async def main():
                 assert rows[0]["meeting_id"]==mid
                 _, data = await call("get_transcript",dict(meeting_id=mid))
                 assert data["transcript"]==transcript
+                page,part=await call("get_transcript",dict(meeting_id=mid,part=1))
+                assert not page.is_error and part["transcript"]==transcript and part["next_part"] is None
+                assert part["transcript_sha256"]==data["transcript_sha256"]
+                bad,_=await call("get_transcript",dict(meeting_id=mid,part=2))
+                assert bad.is_error
                 _, paths = await call("get_meeting_paths",dict(meeting_id=mid))
                 assert paths["summary"] is None and paths["audio"]==str(meeting/"audio.m4a")
                 args = dict(meeting_id=mid,markdown="# 요약\n\n테스트 결과 확인. 담당자 미정.\n",expected_summary_sha256=data["summary_sha256"],transcript_sha256=data["transcript_sha256"])

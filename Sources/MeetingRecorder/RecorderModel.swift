@@ -41,6 +41,12 @@ final class RecorderModel: ObservableObject {
     @Published private(set) var mcpDiagnostic: MCPDiagnosticResult?
     private let pasteboard: NSPasteboard
     private var copyNoticeTask: Task<Void, Never>?
+    @Published private(set) var summarizingID: UUID?
+    @Published private(set) var runningSummaryAgent: SummaryAgent?
+    @Published private(set) var summaryError: (id: UUID, message: String)?
+    @Published private(set) var summaryPreference = UserDefaults.standard.string(forKey: "summaryAgent") ?? "auto"
+    @Published private(set) var summaryExecutables: [SummaryAgent: URL] = [:]
+    private var summaryTask: Task<Void, Never>?
     private var summaryStamp: Date?
     private var summaryFile: URL?
     @Published private(set) var excludesNotificationSounds = true
@@ -86,11 +92,13 @@ final class RecorderModel: ObservableObject {
     var detectedMeetingApps: [MeetingAppCandidate] { availableApps.filter { $0.kind != nil } }
 
     func canDeleteMeeting(_ stored: StoredMeeting) -> Bool {
-        !isBusy && stored.meeting.status != .recording && stored.meeting.status != .finalizing
+        !isBusy && summarizingID != stored.id && stored.meeting.status != .recording && stored.meeting.status != .finalizing
     }
 
     init(pasteboard: NSPasteboard = .general) {
         self.pasteboard = pasteboard
+        refreshSummaryExecutables()
+        refreshMCPConnections()
         excludesNotificationSounds = UserDefaults.standard.object(forKey: "excludesNotificationSounds") as? Bool ?? true
         additionalQuietApps = UserDefaults.standard.stringArray(forKey: "additionalQuietApps") ?? []
         if UserDefaults.standard.object(forKey: "recordingIslandEnabled") != nil {
@@ -574,6 +582,8 @@ final class RecorderModel: ObservableObject {
 
     func finishBeforeQuitting() async {
         isQuitting = true
+        summaryTask?.cancel()
+        await summaryTask?.value
         speakerTask?.cancel()
         polishTask?.cancel()
         await polishTask?.value
@@ -821,10 +831,71 @@ final class RecorderModel: ObservableObject {
         }
     }
 
+    var summaryAgent: SummaryAgent? {
+        if let preferred = SummaryAgent(rawValue: summaryPreference) { return preferred }
+        let connected = SummaryAgent.connected(mcpClients)
+        if !connected.isEmpty { return SummaryAgent.allCases.first(where: connected.contains) }
+        // A supported installed host can open its own temporary MCP connection.
+        // Do not silently send a meeting to a different host if an unsupported one is active.
+        guard mcpClients.isEmpty else { return nil }
+        return SummaryAgent.allCases.first { summaryExecutables[$0] != nil }
+    }
+
+    func setSummaryPreference(_ value: String) {
+        guard summarizingID == nil, value == "auto" || SummaryAgent(rawValue: value) != nil else { return }
+        summaryPreference = value
+        UserDefaults.standard.set(value, forKey: "summaryAgent")
+        summaryError = nil
+        refreshSummaryExecutables()
+    }
+
+    func refreshSummaryExecutables() {
+        summaryExecutables = Dictionary(uniqueKeysWithValues: SummaryAgent.allCases.compactMap { host in
+            host.executable(custom: UserDefaults.standard.string(forKey: "summaryExecutable-" + host.rawValue)).map { (host, $0) }
+        })
+    }
+
+    func chooseSummaryExecutable(_ host: SummaryAgent) {
+        guard summarizingID == nil else { return }
+        let panel = NSOpenPanel()
+        panel.title = host.name + " 실행 파일 선택"
+        panel.allowsMultipleSelection = false
+        panel.showsHiddenFiles = true
+        guard panel.runModal() == .OK, let url = panel.url, FileManager.default.isExecutableFile(atPath: url.path) else { return }
+        UserDefaults.standard.set(url.path, forKey: "summaryExecutable-" + host.rawValue)
+        setSummaryPreference(host.rawValue)
+    }
+
+    func generateSummary(_ stored: StoredMeeting) {
+        guard summaryTask == nil, !isQuitting, stored.meeting.status == .completed, let root else { return }
+        guard let agent = summaryAgent else {
+            summaryError = (stored.id, "설정 및 연결에서 요약에 사용할 Codex 또는 Claude Code를 선택해 주세요.")
+            return
+        }
+        refreshSummaryExecutables()
+        guard let executable = summaryExecutables[agent] else {
+            summaryError = (stored.id, "\(agent.name) 실행 파일을 찾지 못했습니다. 연결 설정에서 위치를 지정해 주세요.")
+            return
+        }
+        let server = Bundle.main.bundleURL.appendingPathComponent("Contents/MacOS/MeetingRecorderMCP")
+        summarizingID = stored.id
+        runningSummaryAgent = agent
+        summaryError = nil
+        summaryTask = Task {
+            defer { summarizingID = nil; runningSummaryAgent = nil; summaryTask = nil }
+            do {
+                try await SummaryAgentRunner.generate(agent: agent, executable: executable, server: server, root: root, meeting: stored)
+                if selectedID == stored.id { summaryStamp = nil; refreshSummary() }
+            } catch is CancellationError { }
+            catch { summaryError = (stored.id, error.localizedDescription) }
+        }
+    }
+
+    func cancelSummary() { summaryTask?.cancel() }
+
     func copySummaryRequest() {
         guard let selected else { return }
-        copyText("meeting-recorder MCP로 회의 \(selected.id.uuidString)의 대화록을 get_transcript로 읽어줘. 주제별 요약, 결정 사항, 액션 아이템(담당자·할 일·기한)을 Markdown으로 정리하고 save_summary로 앱에 저장해줘. 언급되지 않은 담당자와 기한은 미정으로 표시하고 전사가 불명확하면 확인 필요로 남겨줘. 읽을 때 받은 transcript_sha256과 summary_sha256을 저장 도구에 전달해줘.",
-                 message: "요약 요청 복사됨")
+        copyText(MeetingSummaryPrompt.manual(selected.id), message: "요약 요청 복사됨")
     }
 
     func refreshSummary() {

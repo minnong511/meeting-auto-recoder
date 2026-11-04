@@ -115,6 +115,7 @@ struct ContentView: View {
         }
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
             model.refreshNotificationPermission()
+            model.refreshMCPConnections()
             Task { await model.updates.check() }
             model.refreshSummary()
         }
@@ -516,6 +517,9 @@ struct ContentView: View {
             if model.selectedIsActive && tab == "transcript" {
                 Toggle("자동 따라가기", isOn: $followLive).toggleStyle(.checkbox).font(.system(size: 10))
             }
+            if stored.meeting.status == .completed, tab != "summary" || model.summaryText != nil {
+                summaryButton(stored)
+            }
             let label = tab == "transcript" ? "대화록 복사" : (tab == "polished" ? "정리본 복사" : "요약 복사")
             let empty = tab == "polished" ? model.polishedMeetingID != stored.id || !model.hasPolishedText :
                 (tab == "summary" ? model.summaryText == nil : stored.meeting.segments.isEmpty && !FileManager.default.fileExists(atPath: stored.directory.appendingPathComponent("transcript.md").path))
@@ -527,6 +531,25 @@ struct ContentView: View {
             }.buttonStyle(.bordered).controlSize(.small).disabled(empty)
                 .help(label).accessibilityLabel(label).keyboardShortcut("c", modifiers: [.command, .shift])
         }.padding(.horizontal, 4)
+    }
+
+    @ViewBuilder private func summaryButton(_ stored: StoredMeeting) -> some View {
+        if model.summarizingID == stored.id {
+            HStack(spacing: 5) {
+                ProgressView().controlSize(.small)
+                Button("취소", action: model.cancelSummary).controlSize(.small).accessibilityLabel("요약 취소")
+            }
+        } else {
+            let host = model.summaryAgent?.name
+            let label = model.summaryText == nil ? (host.map { $0 + "로 요약" } ?? "회의 요약 생성") : "다시 요약"
+            Button {
+                tab = "summary"
+                model.generateSummary(stored)
+            } label: { Label(label, systemImage: "sparkles") }
+                .buttonStyle(.borderedProminent).controlSize(.small)
+                .disabled(stored.meeting.status != .completed || model.summarizingID != nil)
+                .help(host.map { "이 회의의 대화록을 " + $0 + "에 보내 요약합니다." } ?? "요약 연결 설정")
+        }
     }
 
     private func documentTab(_ label: String, symbol: String, value: String) -> some View {
@@ -573,6 +596,12 @@ struct ContentView: View {
                 } else if tab == "polished" {
                     polishedContent(stored)
                 } else {
+                    if let failure = model.summaryError, failure.id == stored.id {
+                        HStack {
+                            Text(failure.message).foregroundStyle(.secondary)
+                            Button("연결 설정") { model.openSettings(.connections) }
+                        }.font(.callout).padding(.top, 12)
+                    }
                     if let summary = model.summaryText {
                         SummaryMarkdownView(markdown: summary)
                             .textSelection(.enabled).padding(.vertical, 28).padding(.horizontal, 8)
@@ -584,14 +613,11 @@ struct ContentView: View {
                                     .frame(width: 44, height: 44)
                                     .background(RecorderTheme.accent.opacity(0.08), in: RoundedRectangle(cornerRadius: 13))
                                 VStack(alignment: .leading, spacing: 7) {
-                                    Text("아직 회의 요약이 없습니다").font(.system(size: 17, weight: .semibold))
-                                    Text("요약 요청을 복사해 연결된 LLM에 붙여넣으세요.")
-                                        .font(.callout).foregroundStyle(.secondary)
+                                    Text(model.summarizingID == stored.id ? (model.runningSummaryAgent?.name ?? "에이전트") + "가 요약 중입니다" : "아직 회의 요약이 없습니다").font(.system(size: 17, weight: .semibold))
                                 }
                             }
                             HStack(spacing: 16) {
-                                Button(action: model.copySummaryRequest) { Label("요약 요청 복사", systemImage: "doc.on.doc") }
-                                    .buttonStyle(.borderedProminent).disabled(stored.meeting.status != .completed)
+                                summaryButton(stored)
                                 Button("MCP 연결 설정") { model.openSettings(.connections) }
                                     .buttonStyle(.plain).font(.system(size: 11)).foregroundStyle(.secondary)
                             }

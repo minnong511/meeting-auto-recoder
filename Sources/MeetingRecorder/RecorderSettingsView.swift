@@ -132,6 +132,19 @@ struct RecorderSettingsView: View {
     }
 
     @ViewBuilder private var connections: some View {
+        Section("자동 요약") {
+            Picker("요약 에이전트", selection: Binding(get: { model.summaryPreference }, set: model.setSummaryPreference)) {
+                Text("자동").tag("auto")
+                ForEach(SummaryAgent.allCases) { Text($0.name).tag($0.rawValue) }
+            }.disabled(model.summarizingID != nil)
+            if let host = model.summaryAgent {
+                HStack {
+                    Text(model.summaryExecutables[host] == nil ? host.name + " 실행 파일을 찾을 수 없습니다" : host.name + " 사용")
+                    Spacer()
+                    Button("실행 파일 선택…") { model.chooseSummaryExecutable(host) }.disabled(model.summarizingID != nil)
+                }.font(.callout)
+            }
+        }
         Section("LLM 연결") {
             if !model.mcpPresenceAvailable {
                 Label("연결 상태를 확인할 수 없습니다", systemImage: "exclamationmark.circle").foregroundStyle(.orange)
