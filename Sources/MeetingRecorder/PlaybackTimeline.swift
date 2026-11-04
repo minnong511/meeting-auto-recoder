@@ -37,9 +37,9 @@ struct PlaybackTimeline: View {
     @State private var drag: Double?
     @State private var requested = false
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
 
     fileprivate static let inset: CGFloat = 5
-    private static let orange = Color(red: 1, green: 0.47, blue: 0.14)
     private var cursor: Double? { drag ?? hover }
     private var expanded: Bool { enabled && cursor != nil }
     private var audioToLoad: URL? { requested && enabled ? stored.audioURL : nil }
@@ -55,20 +55,14 @@ struct PlaybackTimeline: View {
             let width = max(1, geo.size.width - 2 * Self.inset)
             ZStack(alignment: .bottomLeading) {
                 if expanded, let cursor {
-                    RoundedRectangle(cornerRadius: 6).fill(
-                        LinearGradient(colors: [Color(red: 0.38, green: 0.32, blue: 0.27),
-                                                Color(red: 0.28, green: 0.27, blue: 0.25)],
-                                       startPoint: .topLeading, endPoint: .bottomTrailing))
+                    RoundedRectangle(cornerRadius: 6)
+                        .fill(reduceTransparency ? RecorderTheme.hover : RecorderTheme.accent.opacity(0.12))
                     Canvas { context, size in
                         if let waveform = preview.waveform {
-                            let path = bars(waveform, width: width, height: size.height)
-                            context.fill(path, with: .color(.white.opacity(0.94)))
-                            var highlighted = context
-                            highlighted.clip(to: Path(CGRect(x: 0, y: 0, width: Self.inset + width * cursor, height: size.height)))
-                            highlighted.fill(path, with: .color(Self.orange))
+                            context.fill(bars(waveform, width: width, height: size.height), with: .color(RecorderTheme.accent))
                         }
                         let marker = CGRect(x: Self.inset + width * cursor - 0.5, y: 4, width: 1, height: max(0, size.height - 7))
-                        context.fill(Path(marker), with: .color(Self.orange))
+                        context.fill(Path(marker), with: .color(.primary))
                         if player.hasStarted && abs(played - cursor) * width > 4 {
                             let x = Self.inset + width * played
                             var playhead = Path()
@@ -76,14 +70,14 @@ struct PlaybackTimeline: View {
                             playhead.addLine(to: CGPoint(x: x + 3, y: 1))
                             playhead.addLine(to: CGPoint(x: x, y: 6))
                             playhead.closeSubpath()
-                            context.fill(playhead, with: .color(.white))
+                            context.fill(playhead, with: .color(.primary))
                         }
                     }.accessibilityHidden(true)
                     if preview.unavailable {
-                        Text("파형을 읽을 수 없습니다").font(.caption).foregroundStyle(.white)
+                        Text("파형을 읽을 수 없습니다").font(.caption).foregroundStyle(.primary)
                             .frame(maxWidth: .infinity, maxHeight: .infinity)
                     } else if preview.waveform == nil {
-                        ProgressView().controlSize(.small).tint(.white)
+                        ProgressView().controlSize(.small).tint(RecorderTheme.accent)
                             .frame(maxWidth: .infinity, maxHeight: .infinity)
                     }
                     let tagWidth: CGFloat = player.duration >= 3_600 ? 62 : 46
