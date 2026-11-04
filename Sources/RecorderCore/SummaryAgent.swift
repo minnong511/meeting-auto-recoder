@@ -47,23 +47,23 @@ package enum SummaryAgent: String, CaseIterable, Identifiable, Sendable {
                     "--disable", "hooks", "--disable", "memories", "--disable", "multi_agent",
                     "-c", key + "command=" + (try json(server.path)), "-c", key + "args=" + (try json(args)),
                     "-c", key + "required=true", "-c", key + "default_tools_approval_mode=\"approve\"",
-                    MeetingSummaryPrompt.automatic]
+                    "-"]
         case .claude:
             let config = try json(["mcpServers": ["meeting_summary": ["command": server.path, "args": args]]])
             return ["--print", "--no-session-persistence", "--strict-mcp-config", "--mcp-config", config,
                     "--setting-sources", "", "--tools", "", "--permission-mode", "dontAsk", "--disable-slash-commands",
                     "--allowedTools", "mcp__meeting_summary__get_transcript,mcp__meeting_summary__save_summary",
-                    "--", MeetingSummaryPrompt.automatic]
+                    "--"]
         }
     }
 }
 
 package enum SummaryAgentRunner {
     package static func generate(agent: SummaryAgent, executable: URL, server: URL, root: URL, meeting: StoredMeeting,
-                                 timeout: Duration = .seconds(600)) async throws {
+                                 prompt: MeetingSummaryPrompt = .saved(), timeout: Duration = .seconds(600)) async throws {
         try Task.checkCancellation()
         guard FileManager.default.isExecutableFile(atPath: server.path) else { throw MCPError.message("앱에 포함된 MCP 서버를 찾을 수 없습니다.") }
-        let job = try MeetingSummaryJob(root: root, meeting: meeting)
+        let job = try MeetingSummaryJob(root: root, meeting: meeting, prompt: prompt)
         let fm = FileManager.default
         let dir = fm.temporaryDirectory.appendingPathComponent("meeting-summary-" + UUID().uuidString, isDirectory: true)
         try fm.createDirectory(at: dir, withIntermediateDirectories: false, attributes: [.posixPermissions: 0o700])
@@ -95,7 +95,13 @@ package enum SummaryAgentRunner {
         let path = env["PATH"] ?? "/usr/bin:/bin"
         env["PATH"] = [executable.deletingLastPathComponent().path, path, "/opt/homebrew/bin", "/usr/local/bin"].joined(separator: ":")
         p.environment = env
-        p.standardInput = FileHandle.nullDevice
+        // Supply the user's complete text on stdin for both agents, including
+        // multiline text or text beginning with "-" without interpreting it as CLI flags.
+        let inputURL = dir.appendingPathComponent("instructions.txt")
+        try Data(job.prompt.automatic.utf8).write(to: inputURL)
+        let input = try FileHandle(forReadingFrom: inputURL)
+        defer { try? input.close() }
+        p.standardInput = input
         p.standardOutput = pipe
         p.standardError = pipe
         try Task.checkCancellation()

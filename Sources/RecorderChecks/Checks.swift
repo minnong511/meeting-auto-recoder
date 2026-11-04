@@ -56,6 +56,7 @@ enum Checks {
             ("문단 재생 시각·화자 교대·원문 보존", { try suite.playbackParagraphs() }),
             ("문장 정리 원문 보존·이어하기·외부 수정 보호", { try suite.polishedTranscriptPersistence() }),
             ("날짜별 회의 목록 경계", { try suite.meetingDateGroups() }),
+            ("요약 프롬프트 편집·저장·복원·수동과 자동 요청", { try suite.summaryPromptPreferences() }),
             ("요약 페이지의 문자·줄바꿈·연결 앱 보존", { try suite.summaryPages() }),
             ("자동 요약 전체 읽기·선택 범위·변경 충돌·이력", { try suite.summaryScope() }),
             ("에이전트 취소와 시간 초과 시 파일 보존", { try await suite.summaryCancellation() }),

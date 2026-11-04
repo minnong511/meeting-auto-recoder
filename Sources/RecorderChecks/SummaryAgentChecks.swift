@@ -14,6 +14,30 @@ extension RecorderChecks {
         try expect(SummaryAgent.connected(ids) == [.codex, .claude], "연결된 에이전트 식별 실패")
     }
 
+    func summaryPromptPreferences() throws {
+        let suite = "dev.meetingrecorder.tests.summary-prompt." + UUID().uuidString
+        let prefs = UserDefaults(suiteName: suite)!
+        defer { prefs.removePersistentDomain(forName: suite) }
+        let original = MeetingSummaryPrompt()
+        try expect(MeetingSummaryPrompt.saved(in: prefs) == original, "첫 설치의 기본 요약 지침이 다름")
+        let custom = MeetingSummaryPrompt("--format\n첫 줄은 ‘검토 결과’\n- 숫자는 표에 넣는다.\n")
+        custom.save(in: prefs)
+        let reopened = MeetingSummaryPrompt.saved(in: UserDefaults(suiteName: suite)!)
+        try expect(reopened.editorial == custom.editorial, "다국어·개행·마지막 공백이 저장되지 않음")
+        let id = UUID()
+        for request in [reopened.manual(id), reopened.automatic] {
+            try expect(request.hasPrefix(custom.editorial) && request.contains(MeetingSummaryPrompt.evidenceRules) &&
+                request.contains("get_transcript") && request.contains("save_summary"), "사용자 지침 또는 자료 처리 규칙 누락")
+            try expect(!request.contains(MeetingSummaryPrompt.defaultEditorial), "서로 다른 두 문체 지침이 함께 전달됨")
+        }
+        try expect(reopened.manual(id).contains(id.uuidString), "복사 요청의 회의 식별자 누락")
+        MeetingSummaryPrompt(" \n\t").save(in: prefs)
+        try expect(MeetingSummaryPrompt.saved(in: prefs) == original, "공백 편집 시 기본 지침 누락")
+        custom.save(in: prefs); original.save(in: prefs)
+        try expect(MeetingSummaryPrompt.saved(in: prefs) == original && (prefs.persistentDomain(forName: suite) ?? [:]).isEmpty,
+                   "복원 뒤 사용자 지침이 남음")
+    }
+
     func summaryScope() throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("summary-scope-" + UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: root) }
@@ -27,9 +51,17 @@ extension RecorderChecks {
         try "기존 요약".write(to: summary, atomically: true, encoding: .utf8)
         let workspace = root.appendingPathComponent("job", isDirectory: true)
         try FileManager.default.createDirectory(at: workspace, withIntermediateDirectories: false)
-        let job = try MeetingSummaryJob(root: root, meeting: stored)
+        let frozen = MeetingSummaryPrompt("안건마다 표를 하나 작성한다.")
+        let job = try MeetingSummaryJob(root: root, meeting: stored, prompt: frozen)
         try job.publishTicket(in: workspace)
         let session = try ScopedSummarySession(directory: workspace)
+        try expect(session.prompt == frozen, "작업에 고정한 지침이 MCP에서 바뀜")
+        let ticket = workspace.appendingPathComponent("request.json")
+        var legacy = try JSONSerialization.jsonObject(with: Data(contentsOf: ticket)) as! [String: Any]
+        legacy.removeValue(forKey: "editorialPrompt")
+        try JSONSerialization.data(withJSONObject: legacy).write(to: ticket)
+        let oldSession = try ScopedSummarySession(directory: workspace)
+        try expect(oldSession.prompt == MeetingSummaryPrompt(), "이전 버전 작업의 기본 지침 누락")
         let first = try session.call("get_transcript", arguments: ["part": 1])
         guard let total = first["total_parts"] as? Int, total > 1 else { throw CheckError.failed("여러 부분으로 나뉘지 않음") }
         try expect(first["paths"] == nil, "회의 경로 노출")

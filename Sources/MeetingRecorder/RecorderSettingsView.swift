@@ -144,6 +144,7 @@ struct RecorderSettingsView: View {
                     Button("실행 파일 선택…") { model.chooseSummaryExecutable(host) }.disabled(model.summarizingID != nil)
                 }.font(.callout)
             }
+            SummaryPromptSettings()
         }
         Section("LLM 연결") {
             if !model.mcpPresenceAvailable {

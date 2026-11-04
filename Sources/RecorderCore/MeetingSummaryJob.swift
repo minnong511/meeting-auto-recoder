@@ -1,20 +1,24 @@
 import Foundation
 
-/// Only the ticket and a proposed summary live in the private temporary directory.
+/// The job captures both the source revision and the editing instructions at launch.
 package struct MeetingSummaryJob: Codable, Sendable {
     let root: URL
     let folder: URL
     let id: UUID
     let transcriptHash: String
     let summaryHash: String
+    // Old tickets have no editorial field and retain the built-in instructions.
+    private let editorialPrompt: String?
+    package var prompt: MeetingSummaryPrompt { MeetingSummaryPrompt(editorialPrompt) }
 
-    package init(root: URL, meeting: StoredMeeting) throws {
+    package init(root: URL, meeting: StoredMeeting, prompt: MeetingSummaryPrompt = .init()) throws {
         let store = MCPStore(root: root)
         let pinned = try store.pinnedMeeting(directory: meeting.directory, id: meeting.id)
         let record = try store.transcript(pinned)
         guard let hash = record["transcript_sha256"] as? String, let previous = record["summary_sha256"] as? String,
               let text = record["transcript"] as? String, !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         else { throw MCPError.message("읽을 대화록이 없습니다.") }
+        self.editorialPrompt = prompt.editorial
         self.root = root; folder = pinned.directory; id = pinned.id; transcriptHash = hash; summaryHash = previous
     }
 
@@ -41,6 +45,7 @@ package final class ScopedSummarySession {
     private let title: String
     private let pages: MeetingSummaryPages
     private var readParts = Set<Int>()
+    package let prompt: MeetingSummaryPrompt
 
     package init(directory: URL) throws {
         let job = try JSONDecoder().decode(MeetingSummaryJob.self, from: Data(contentsOf: directory.appendingPathComponent("request.json")))
@@ -50,6 +55,7 @@ package final class ScopedSummarySession {
               let transcript = record["transcript"] as? String, let title = record["title"] as? String else {
             throw MCPError.message("요약을 시작한 뒤 회의 내용이 변경됐습니다. 다시 시도해 주세요.")
         }
+        prompt = job.prompt
         self.directory = directory; self.title = title; pages = MeetingSummaryPages(transcript)
     }
 
@@ -57,7 +63,7 @@ package final class ScopedSummarySession {
         ["name": "get_transcript", "description": "선택된 회의의 대화록 한 부분을 읽습니다. part는 1부터 시작합니다.",
          "inputSchema": ["type": "object", "properties": ["part": ["type": "integer", "minimum": 1]], "required": ["part"], "additionalProperties": false],
          "annotations": ["readOnlyHint": true, "openWorldHint": false]],
-        ["name": "save_summary", "description": "전체 대화록을 읽고 완성한 한국어 회의록을 앱에 제출합니다.",
+        ["name": "save_summary", "description": "전체 대화록을 읽고 완성한 Markdown 회의록을 앱에 제출합니다.",
          "inputSchema": ["type": "object", "properties": ["markdown": ["type": "string"]], "required": ["markdown"], "additionalProperties": false],
          "annotations": ["destructiveHint": false, "openWorldHint": false]]
     ]

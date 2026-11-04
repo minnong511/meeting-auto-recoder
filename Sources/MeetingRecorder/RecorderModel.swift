@@ -878,13 +878,14 @@ final class RecorderModel: ObservableObject {
             return
         }
         let server = Bundle.main.bundleURL.appendingPathComponent("Contents/MacOS/MeetingRecorderMCP")
+        let prompt = MeetingSummaryPrompt.saved()
         summarizingID = stored.id
         runningSummaryAgent = agent
         summaryError = nil
         summaryTask = Task {
             defer { summarizingID = nil; runningSummaryAgent = nil; summaryTask = nil }
             do {
-                try await SummaryAgentRunner.generate(agent: agent, executable: executable, server: server, root: root, meeting: stored)
+                try await SummaryAgentRunner.generate(agent: agent, executable: executable, server: server, root: root, meeting: stored, prompt: prompt)
                 if selectedID == stored.id { summaryStamp = nil; refreshSummary() }
             } catch is CancellationError { }
             catch { summaryError = (stored.id, error.localizedDescription) }
@@ -895,7 +896,7 @@ final class RecorderModel: ObservableObject {
 
     func copySummaryRequest() {
         guard let selected else { return }
-        copyText(MeetingSummaryPrompt.manual(selected.id), message: "요약 요청 복사됨")
+        copyText(MeetingSummaryPrompt.saved().manual(selected.id), message: "요약 요청 복사됨")
     }
 
     func refreshSummary() {
