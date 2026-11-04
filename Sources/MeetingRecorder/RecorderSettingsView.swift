@@ -11,6 +11,7 @@ struct RecorderSettingsView: View {
     @Environment(\.dismiss) private var dismiss
     @State private var showsConnectionDetails = false
     @State private var showsQuietApps = false
+    @FocusState private var focusedSettingsPage: RecorderSettingsPage?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -19,10 +20,9 @@ struct RecorderSettingsView: View {
                 Spacer()
                 Button("완료") { dismiss() }.keyboardShortcut(.defaultAction)
             }.padding(.horizontal, 24).padding(.top, 18)
-            Picker("설정 항목", selection: $model.settingsPage) {
-                ForEach(RecorderSettingsPage.allCases, id: \.self) { Text($0.rawValue).tag($0) }
-            }.pickerStyle(.segmented).labelsHidden().accessibilityLabel("설정 항목")
-                .frame(maxWidth: 290).padding(.horizontal, 24).padding(.vertical, 14)
+            settingsNavigation
+                .padding(.horizontal, 24)
+                .padding(.vertical, 16)
             Divider()
             Form {
                 switch model.settingsPage {
@@ -44,6 +44,46 @@ struct RecorderSettingsView: View {
                 await model.checkSupport()
             case .general: break
             }
+        }
+    }
+
+    private var settingsNavigation: some View {
+        HStack(spacing: 4) {
+            ForEach(RecorderSettingsPage.allCases, id: \.self) { page in
+                Button {
+                    model.settingsPage = page
+                    focusedSettingsPage = page
+                } label: {
+                    Text(page.rawValue)
+                        .font(RecorderTheme.heading(14))
+                        .frame(maxWidth: .infinity, minHeight: 40)
+                        .contentShape(RoundedRectangle(cornerRadius: 8))
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(model.settingsPage == page ? RecorderTheme.canvas : Color.primary)
+                .background(model.settingsPage == page ? RecorderTheme.accent : Color.clear,
+                            in: RoundedRectangle(cornerRadius: 8))
+                .focusable()
+                .focused($focusedSettingsPage, equals: page)
+                .accessibilityLabel(page.rawValue)
+                .accessibilityAddTraits(model.settingsPage == page ? .isSelected : [])
+            }
+        }
+        .padding(4)
+        .background(RecorderTheme.hover, in: RoundedRectangle(cornerRadius: 12))
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel("설정 항목")
+        .onMoveCommand { direction in
+            let pages = RecorderSettingsPage.allCases
+            let index = pages.firstIndex(of: focusedSettingsPage ?? model.settingsPage) ?? 0
+            let next: Int
+            switch direction {
+            case .left: next = (index + pages.count - 1) % pages.count
+            case .right: next = (index + 1) % pages.count
+            default: return
+            }
+            model.settingsPage = pages[next]
+            focusedSettingsPage = pages[next]
         }
     }
 

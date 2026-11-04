@@ -58,14 +58,14 @@ python3 scripts/check-signing.py
 
 ## 회귀 검사와 배포 ZIP
 
-개발 중인 설치 스크립트는 `--with-ollama`로 Ollama를 선택적으로 준비합니다. 모델은 자동으로 내려받지 않으며, 원하면 `--ollama-model gemma4:e2b`처럼 기본 라이브러리 모델을 직접 지정합니다. 스크립트가 가리키는 앱 배포본은 별도 갱신해야 개발 중인 앱 변경 사항이 포함됩니다. 앱의 설정에서 내려받은 모델을 선택하며, 이미 다듬은 문단은 유지되고 이후 처리한 문단에 사용한 모델이 기록됩니다. CPU와 메모리 요구량 및 한국어 결과는 모델마다 다릅니다.
+설치 스크립트의 `--with-ollama` 옵션으로 문장 다듬기에 쓸 Ollama를 추가할 수 있습니다. 모델까지 내려받으려면 `--ollama-model gemma4:e2b`처럼 이름을 지정합니다. CPU·메모리 요구량과 한국어 다듬기 결과는 모델에 따라 다릅니다.
 
 ```sh
 bash scripts/build-app.sh
 .build/release/RecorderChecks
 python3 scripts/check-signing.py
 python3 scripts/package-release.py
-python3 scripts/check-release.py releases/Meeting-Recorder-0.8.0-macOS-arm64.zip
+python3 scripts/check-release.py releases/Meeting-Recorder-0.8.1-macOS-arm64.zip
 ```
 
 `package-release.py`는 이미 빌드한 앱을 검증하고 ZIP으로 묶습니다. 앱을 다시 서명하거나 설치하지 않습니다. `check-release.py`는 ZIP을 별도 임시 폴더에 풀어 파일 목록·SHA-256·실행 권한·앱/MCP 서명과 시작 진단을 확인합니다. 새로운 Mac의 시스템 오디오 권한과 실제 녹음까지 검증하는 절차는 아니므로 대상 Mac에서도 테스트해야 합니다.

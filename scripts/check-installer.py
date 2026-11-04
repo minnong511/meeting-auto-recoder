@@ -6,6 +6,7 @@ from pathlib import Path
 import plistlib
 import re
 import subprocess
+import sys
 import tempfile
 import time
 
@@ -20,7 +21,10 @@ def run(*args, check=True):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--download", action="store_true", help="also download the pinned ZIP from GitHub")
+    parser.add_argument("--previous-version", help="exercise an upgrade from a published local ZIP, e.g. 0.8.0")
     options = parser.parse_args()
+    if options.previous_version and not re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+", options.previous_version):
+        parser.error("--previous-version requires a three-part release version")
     root = Path(__file__).resolve().parent.parent
     installer = root / "scripts/install.sh"
     version = re.search(r"local version=([0-9.]+)", installer.read_text()).group(1)
@@ -134,6 +138,28 @@ def main():
         assert run("/bin/bash", str(installer), "--ollama-model", "qwen3.5:4b", check=False).returncode != 0
         assert run("/bin/bash", str(installer), "--with-ollama", "--ollama-model", "qwen3:cloud", check=False).returncode != 0
         passed("invalid arguments are rejected")
+
+        if options.previous_version:
+            previous = options.previous_version
+            assert tuple(map(int, previous.split("."))) < tuple(map(int, version.split("."))), "expected an older release"
+            name = f"Meeting-Recorder-{previous}-macOS-arm64"
+            previous_zip = root / "releases" / (name + ".zip")
+            run(sys.executable, str(root / "scripts/check-release.py"), str(previous_zip))
+            old_stage = workspace / "Old release"
+            run("/usr/bin/ditto", "-x", "-k", str(previous_zip), str(old_stage))
+            folder = workspace / "Upgrade"
+            folder.mkdir()
+            old_app = folder / "Meeting Recorder.app"
+            (old_stage / name / old_app.name).rename(old_app)
+            mcp_path = Path("Contents/MacOS/MeetingRecorderMCP")
+            inode = (old_app / mcp_path).stat().st_ino
+            result = install(folder=folder)
+            assert result.returncode == 0, result.stdout + result.stderr
+            backup, = (folder / ".meeting-recorder-backups").glob("*/Meeting Recorder.app")
+            for bundle, expected in [(old_app, version), (backup, previous)]:
+                assert plistlib.loads((bundle / "Contents/Info.plist").read_bytes())["CFBundleShortVersionString"] == expected
+            assert (backup / mcp_path).stat().st_ino == inode and (old_app / mcp_path).stat().st_ino != inode
+            passed(f"published {previous} upgrades to {version} and preserves the previous MCP executable")
 
         if options.download:
             result = install(folder=workspace / "Downloaded", download=True)
