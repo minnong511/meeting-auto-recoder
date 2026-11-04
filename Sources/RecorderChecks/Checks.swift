@@ -78,6 +78,7 @@ enum Checks {
             ("완료된 회의 상태 유지", { try suite.completedPreserved() }),
             ("시간 표시와 비정상 값", { try suite.timestamps() }),
             ("스테레오 입력 리샘플링", { try suite.resampling() }),
+            ("재생 파형의 무음·채널·피크·파일 교체", { try await suite.playbackWaveform() }),
             ("상단 음량 바 실제 입력·무음·입력 중단·재시작", { try suite.recordingLevelHistory() }),
             ("노치 확장 주사율 독립·연속 반전·안정적 마무리", { try suite.recordingIslandMotion() }),
             ("양쪽 음성·시간 오프셋·M4A 내보내기", { try await suite.audioExport() }),

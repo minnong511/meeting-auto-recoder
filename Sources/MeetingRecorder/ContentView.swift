@@ -728,28 +728,42 @@ struct ContentView: View {
     private func audioBar(_ stored: StoredMeeting) -> some View {
         VStack(spacing: 0) {
             Divider()
-            HStack(spacing: 12) {
+            PlaybackTimeline(player: playback, stored: stored, enabled: !model.isBusy && playback.duration > 0)
+                .id(stored.audioURL)
+                .padding(.top, 4)
+            HStack(spacing: 10) {
                 Button { playback.toggle(stored) } label: {
                     Image(systemName: playback.isPlaying ? "pause.fill" : "play.fill").font(.system(size: 12))
-                        .foregroundStyle(RecorderTheme.accent).frame(width: 34, height: 34)
+                        .foregroundStyle(RecorderTheme.accent).frame(width: 32, height: 32)
                         .background(RecorderTheme.accent.opacity(0.09), in: Circle())
                 }.buttonStyle(.plain).disabled(model.isBusy)
                     .accessibilityLabel(playback.isPlaying ? "녹음 일시정지" : "녹음 재생")
                 Button { playback.skip(-10, in: stored) } label: { Image(systemName: "gobackward.10") }
                     .buttonStyle(.borderless).disabled(model.isBusy).help("10초 뒤로").accessibilityLabel("10초 뒤로")
-                VStack(spacing: 3) {
-                    Slider(value: Binding(get: { playback.position }, set: { playback.scrubPosition($0, in: stored) }),
-                           in: 0...max(1, playback.duration), onEditingChanged: { playback.scrub($0, in: stored) })
-                        .disabled(model.isBusy || playback.duration <= 0).accessibilityLabel("녹음 재생 위치")
-                        .accessibilityValue(TranscriptMarkdown.timestamp(playback.position))
-                    HStack {
-                        Text(TranscriptMarkdown.timestamp(playback.position))
-                        Spacer()
-                        Text(TranscriptMarkdown.timestamp(playback.duration))
-                    }.font(.system(size: 10, design: .monospaced)).foregroundStyle(.secondary)
-                }
                 Button { playback.skip(10, in: stored) } label: { Image(systemName: "goforward.10") }
                     .buttonStyle(.borderless).disabled(model.isBusy).help("10초 앞으로").accessibilityLabel("10초 앞으로")
+                Text(PlaybackTimeline.time(playback.position) + " / " + PlaybackTimeline.time(playback.duration))
+                    .font(.system(size: 11, design: .monospaced)).foregroundStyle(.secondary).fixedSize()
+                Spacer(minLength: 4)
+                Picker("재생 속도", selection: Binding(get: { playback.rate }, set: playback.setRate)) {
+                    ForEach(RecordingPlayer.rates, id: \.self) { rate in
+                        Text(rate.formatted(.number.precision(.fractionLength(0...2))) + "×").tag(rate)
+                    }
+                }.labelsHidden().pickerStyle(.menu).controlSize(.small).fixedSize()
+                    .help("재생 속도").accessibilityLabel("재생 속도")
+                HStack(spacing: 5) {
+                    Button(action: playback.toggleMute) {
+                        Image(systemName: playback.isMuted ? "speaker.slash.fill" :
+                                (playback.volume < 0.5 ? "speaker.wave.1.fill" : "speaker.wave.2.fill"))
+                            .frame(width: 18, height: 24)
+                    }.buttonStyle(.borderless)
+                        .accessibilityLabel(playback.isMuted ? "음소거 해제" : "녹음 음소거")
+                        .help(playback.isMuted ? "음소거 해제" : "음소거")
+                    Slider(value: Binding(get: { playback.effectiveVolume }, set: playback.setVolume), in: 0...1)
+                        .controlSize(.small).frame(minWidth: 45, idealWidth: 65, maxWidth: 76)
+                        .accessibilityLabel("재생 음량").accessibilityValue(playback.effectiveVolume.formatted(.percent.precision(.fractionLength(0))))
+                        .help("재생 음량")
+                }
                 Menu {
                     if let audio = stored.audioURL {
                         filePathItem("녹음 파일", file: audio)
@@ -758,7 +772,7 @@ struct ContentView: View {
                     }
                 } label: { Image(systemName: "ellipsis").frame(width: 24, height: 24) }
                     .menuStyle(.borderlessButton).fixedSize().accessibilityLabel("녹음 파일 더 보기")
-            }.padding(.horizontal, 4).padding(.vertical, 12)
+            }.padding(.horizontal, 4).padding(.vertical, 5)
         }.onAppear { playback.prepare(stored) }
     }
 

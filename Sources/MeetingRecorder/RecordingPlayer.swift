@@ -11,6 +11,12 @@ final class RecordingPlayer: ObservableObject {
     @Published private(set) var hasStarted = false
     @Published private(set) var meetingID: UUID?
     @Published private(set) var errorMessage: String?
+    static let rates: [Double] = [0.5, 0.75, 1, 1.25, 1.5, 1.75, 2]
+    @Published private(set) var rate: Double
+    @Published private(set) var volume: Double
+    @Published private(set) var isMuted: Bool
+    var effectiveVolume: Double { isMuted ? 0 : volume }
+    private let preferences: UserDefaults
     private var player: AVPlayer?
     private var observer: Any?
     private var durationTask: Task<Void, Never>?
@@ -18,6 +24,46 @@ final class RecordingPlayer: ObservableObject {
     private var isSeeking = false
     private var isScrubbing = false
     private var resumeAfterScrubbing = false
+    private var playAfterSeek = false
+    private var wantsPlayback: Bool { isPlaying || (isSeeking && playAfterSeek) }
+
+    init(preferences: UserDefaults = .standard) {
+        self.preferences = preferences
+        let speed = preferences.double(forKey: "playbackRate")
+        rate = Self.rates.contains(speed) ? speed : 1
+        let gain = preferences.double(forKey: "playbackVolume")
+        volume = gain.isFinite && gain > 0 ? min(gain, 1) : 1
+        isMuted = preferences.bool(forKey: "playbackMuted")
+    }
+
+    func setRate(_ value: Double) {
+        guard Self.rates.contains(value), rate != value else { return }
+        rate = value
+        preferences.set(value, forKey: "playbackRate")
+        player?.defaultRate = Float(value)
+        if isPlaying { player?.rate = Float(value) }
+    }
+
+    func setVolume(_ value: Double) {
+        guard value.isFinite else { return }
+        let gain = min(max(0, value), 1)
+        if gain > 0, volume != gain {
+            volume = gain
+            preferences.set(gain, forKey: "playbackVolume")
+            player?.volume = Float(gain)
+        }
+        setMuted(gain == 0)
+    }
+
+    func toggleMute() { setMuted(!isMuted) }
+
+    private func setMuted(_ value: Bool) {
+        guard value != isMuted else { return }
+        isMuted = value
+        preferences.set(value, forKey: "playbackMuted")
+        player?.isMuted = value
+    }
+
 
     @discardableResult
     func prepare(_ stored: StoredMeeting) -> Bool {
@@ -30,6 +76,10 @@ final class RecordingPlayer: ObservableObject {
         meetingID = stored.id
         duration = max(0, stored.meeting.endedAt?.timeIntervalSince(stored.meeting.startedAt) ?? 0)
         let loaded = AVPlayer(url: url)
+        loaded.defaultRate = Float(rate)
+        loaded.volume = Float(volume)
+        loaded.isMuted = isMuted
+        loaded.currentItem?.audioTimePitchAlgorithm = .timeDomain
         player = loaded
         observer = loaded.addPeriodicTimeObserver(forInterval: CMTime(seconds: 0.25, preferredTimescale: 600), queue: .main) { [weak self] time in
             Task { @MainActor [weak self] in
@@ -54,20 +104,23 @@ final class RecordingPlayer: ObservableObject {
         player?.pause()
         if let observer { player?.removeTimeObserver(observer) }
         observer = nil; player = nil; meetingID = nil
-        seekID = UUID(); isSeeking = false; isScrubbing = false
+        seekID = UUID(); isSeeking = false; isScrubbing = false; playAfterSeek = false
         resumeAfterScrubbing = false; isPlaying = false; hasStarted = false
         position = 0; duration = 0; errorMessage = nil
     }
 
     func pause() {
-        seekID = UUID(); isSeeking = false
+        if isScrubbing, let time = player?.currentTime().seconds, time.isFinite { position = max(0, time) }
+        isScrubbing = false; resumeAfterScrubbing = false
+        seekID = UUID(); isSeeking = false; playAfterSeek = false
         player?.currentItem?.cancelPendingSeeks()
         player?.pause(); isPlaying = false
     }
 
     func toggle(_ stored: StoredMeeting) {
         guard prepare(stored) else { return }
-        if isPlaying { pause() }
+        if wantsPlayback { pause() }
+        else if isSeeking { seek(to: position, in: stored, autoplay: true) }
         else if duration > 0, position >= duration - 0.1 { seek(to: 0, in: stored, autoplay: true) }
         else { hasStarted = true; player?.play(); isPlaying = true }
     }
@@ -76,36 +129,41 @@ final class RecordingPlayer: ObservableObject {
         guard seconds.isFinite, prepare(stored), let player else { return }
         let target = duration > 0 ? min(max(0, seconds), duration) : max(0, seconds)
         let request = UUID(); seekID = request
-        hasStarted = true; isSeeking = true; position = target
+        hasStarted = true; isSeeking = true; playAfterSeek = autoplay; position = target
         player.pause(); isPlaying = false
         player.seek(to: CMTime(seconds: target, preferredTimescale: 600), toleranceBefore: .zero, toleranceAfter: .zero) { [weak self] finished in
             Task { @MainActor [weak self] in
                 guard let self, self.meetingID == stored.id, self.seekID == request else { return }
-                self.isSeeking = false
+                self.isSeeking = false; self.playAfterSeek = false
                 if finished, autoplay { self.player?.play(); self.isPlaying = true }
             }
         }
     }
 
     func skip(_ seconds: Double, in stored: StoredMeeting) {
-        seek(to: position + seconds, in: stored, autoplay: isPlaying)
+        seek(to: position + seconds, in: stored, autoplay: wantsPlayback)
     }
 
     func scrub(_ editing: Bool, in stored: StoredMeeting) {
         if editing {
-            resumeAfterScrubbing = isPlaying
-            isScrubbing = true
+            guard !isScrubbing, prepare(stored) else { return }
+            let resume = wantsPlayback
             pause()
+            resumeAfterScrubbing = resume
+            isScrubbing = true
         } else {
+            guard isScrubbing, meetingID == stored.id else { return }
+            let resume = resumeAfterScrubbing
+            resumeAfterScrubbing = false
             isScrubbing = false
-            seek(to: position, in: stored, autoplay: resumeAfterScrubbing)
+            seek(to: position, in: stored, autoplay: resume)
         }
     }
 
     func scrubPosition(_ seconds: Double, in stored: StoredMeeting) {
         guard seconds.isFinite else { return }
-        if isScrubbing { position = min(max(0, seconds), max(1, duration)) }
-        else { seek(to: seconds, in: stored, autoplay: isPlaying) }
+        if isScrubbing { position = min(max(0, seconds), duration) }
+        else { seek(to: seconds, in: stored, autoplay: wantsPlayback) }
     }
 
     func finished(_ notification: Notification) {
