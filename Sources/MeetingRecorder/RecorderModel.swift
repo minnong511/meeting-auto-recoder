@@ -86,6 +86,7 @@ final class RecorderModel: ObservableObject {
 
     var isBusy: Bool { phase != .idle || isPolishing }
     var selected: StoredMeeting? { meetings.first { $0.id == selectedID } }
+    var recordingMeetingID: UUID? { phase == .idle ? nil : current?.id }
     var selectedIsActive: Bool { current?.id == selectedID && isBusy }
     var recordingTarget: RecordingTarget? {
         guard !selectedTargetID.isEmpty else { return nil }
@@ -933,6 +934,31 @@ final class RecorderModel: ObservableObject {
     private func updateList(_ stored: StoredMeeting) {
         if let index = meetings.firstIndex(where: { $0.id == stored.id }) { meetings[index] = stored }
         else { meetings.insert(stored, at: 0) }
+    }
+
+    /// Accept the search reader's current library without running migration or
+    /// recovery writes. An in-flight recording always keeps its live snapshot.
+    func applySearchLibrary(_ refreshed: [StoredMeeting]) {
+        var next = refreshed
+        if phase != .idle, let current {
+            next.removeAll { $0.id == current.id }
+            next.append(current)
+        }
+        next.sort { $0.meeting.startedAt > $1.meeting.startedAt }
+        let unchanged = meetings.count == next.count && zip(meetings, next).allSatisfy { old, new in
+            old.id == new.id && old.directory == new.directory &&
+            old.meeting.title == new.meeting.title && old.meeting.startedAt == new.meeting.startedAt &&
+            old.meeting.endedAt == new.meeting.endedAt && old.meeting.status == new.meeting.status &&
+            old.meeting.audioFile == new.meeting.audioFile && old.meeting.segments == new.meeting.segments &&
+            old.meeting.warnings == new.meeting.warnings && old.meeting.error == new.meeting.error
+        }
+        if !unchanged { meetings = next }
+        if let selectedID, !next.contains(where: { $0.id == selectedID }) { self.selectedID = nil }
+    }
+
+    func applySearchMeeting(_ refreshed: StoredMeeting) {
+        guard meetings.contains(where: { $0.id == refreshed.id }) else { return }
+        applySearchLibrary(meetings.map { $0.id == refreshed.id ? refreshed : $0 })
     }
 
     private func reload(recover: Bool) {

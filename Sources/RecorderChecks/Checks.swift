@@ -16,6 +16,11 @@ func expect(_ condition: @autoclosure () -> Bool, _ message: String) throws {
 enum Checks {
     static func main() async {
         let suite = RecorderChecks()
+        if CommandLine.arguments.contains("--search-benchmark") {
+            do { try await suite.meetingSearchBenchmark() }
+            catch { print("FAIL meeting search benchmark: \(error)"); exit(1) }
+            return
+        }
         if let index = CommandLine.arguments.firstIndex(of: "--speaker-fixture"), CommandLine.arguments.count > index + 3 {
             do {
                 try await suite.speakerRecording(audio: URL(fileURLWithPath: CommandLine.arguments[index + 1]),
@@ -24,13 +29,22 @@ enum Checks {
             } catch { print("FAIL speaker recording: \(error)"); exit(1) }
             return
         }
+        let searchChecks: [(String, () async throws -> Void)] = [
+            ("로컬 검색 한국어 공백·Unicode·영문·숫자·구두점", { try suite.meetingSearchText() }),
+            ("본문 검색 회의·발언 ID·정확한 재생 시각·원본 불변", { try await suite.meetingSearchEvidence() }),
+            ("외부 Markdown·요약 변경 갱신·오래된 근거 거부", { try await suite.meetingSearchExternalDocuments() }),
+            ("검색 중 회의 이동·삭제와 결과 재검증", { try await suite.meetingSearchFileChanges() }),
+            ("검색 경로 범위·심볼릭 링크·손상·읽기 권한", { try await suite.meetingSearchInvalidSources() }),
+            ("검색 취소·색인 초기화·재시작 원본 보존", { try await suite.meetingSearchCancellation() })
+        ]
         let deletionChecks: [(String, () async throws -> Void)] = [
             ("회의 휴지통 이동·관련 파일 보존·다른 기록 유지", { try suite.meetingTrashContents() }),
             ("진행 중인 회의 삭제 거부·현재 상태 재검증", { try suite.activeMeetingDeletionRefused() }),
             ("삭제 경로 범위·심볼릭 링크·회의 ID 검증", { try suite.meetingDeletionScope() }),
             ("휴지통 이동 실패·요약 저장 중 기록 보존", { try suite.meetingDeletionFailure() })
         ]
-        let checks: [(String, () async throws -> Void)] = CommandLine.arguments.contains("--deletion-only") ? deletionChecks : deletionChecks + [
+        let checks: [(String, () async throws -> Void)] = CommandLine.arguments.contains("--search-only") ? searchChecks :
+            CommandLine.arguments.contains("--deletion-only") ? deletionChecks : deletionChecks + searchChecks + [
             ("고유 폴더와 안전한 제목", { try suite.uniqueFolders() }),
             ("오디오 경로 이탈 거부", { try suite.safeChunkPaths() }),
             ("전사 정렬·확정 결과 중복 제거", { try suite.finalSegments() }),
